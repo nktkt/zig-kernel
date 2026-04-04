@@ -6,7 +6,7 @@ Each milestone builds on the previous one.
 ## Current State
 
 - **v1.0** — 7,582 LOC / 34 source files
-- Level: Hobby OS (Milestone 2 complete)
+- Level: Milestone 1 complete + Milestone 2 foundations (~6% of MS2 scope)
 
 ---
 
@@ -83,82 +83,116 @@ Each milestone builds on the previous one.
 
 ---
 
-## Milestone 2: Hobby OS ✅ COMPLETE (v1.0, 7,582 LOC)
+## Milestone 2: Hobby OS — ~50,000 LOC (IN PROGRESS — foundations laid)
 
-**Goal**: GUI foundations, full TCP, USB detection, DNS/DHCP, ext2, POSIX extensions.
+**Goal**: GUI, full TCP, USB, x86_64. Usable as a daily-driver hobby OS.
 
-### 2-1. x86_64 preparation ✅
-- [x] CPUID feature detection (smp.zig)
-- [ ] Long mode transition (future: requires full kernel rewrite)
-- [ ] 64-bit page tables, syscall/sysret
+> **Current progress**: Skeleton modules for each subsystem exist (v1.0), but most need significant expansion. ~1,939 LOC implemented out of ~34,500 estimated (~6%).
 
-### 2-2. SMP basics ✅
+### 2-1. x86_64 migration (~3,000 LOC) — ❌ NOT STARTED
+- [ ] Long mode transition (GDT64, CR4.PAE, EFER.LME, CR0.PG)
+- [ ] 64-bit page tables (4-level: PML4 → PDPT → PD → PT)
+- [ ] syscall/sysret via STAR/LSTAR MSR
+- [ ] 64-bit TSS
+- [ ] Update build.zig target to x86_64
+- Foundation: CPUID detection available in smp.zig
+- Ref: OSDev "Setting Up Long Mode"
+
+### 2-2. SMP basics (~2,000 LOC) — ⚠️ 105/2,000 LOC (5%)
 - [x] BSP APIC ID detection via CPUID
-- [x] CPU count from ACPI MADT
 - [x] SpinLock primitives (lock xchg atomic operations)
-- [ ] AP startup (future: INIT-SIPI-SIPI)
-- [ ] Per-CPU run queues
+- [x] CPU count detection
+- [ ] AP (Application Processor) startup (INIT-SIPI-SIPI)
+- [ ] Per-CPU variables (GS base)
+- [ ] SMP-aware scheduler (per-CPU run queues)
+- Ref: OSDev "Symmetric Multiprocessing"
 
-### 2-3. ACPI basics ✅
-- [x] RSDP / RSDT / MADT / FADT parser (acpi.zig)
-- [x] CPU count and APIC address extraction
-- [x] ACPI shutdown support (PM1a_CNT)
-- [x] `acpi` and `shutdown` shell commands
+### 2-3. ACPI basics (~2,000 LOC) — ⚠️ 251/2,000 LOC (13%)
+- [x] RSDP/RSDT/MADT/FADT parser structure (acpi.zig)
+- [x] ACPI shutdown function (PM1a_CNT)
+- [ ] RSDP discovery working (currently disabled — crashes on BIOS ROM access)
+- [ ] Local APIC + I/O APIC initialization (replace legacy PIC)
+- [ ] ACPI table verification and safe memory access
+- Ref: ACPI spec, OSDev "APIC"
 
-### 2-4. Framebuffer + GUI ✅
-- [x] Framebuffer graphics library (framebuf.zig): putPixel, drawRect, fillRect, drawChar, drawString
+### 2-4. Framebuffer + GUI (~8,000 LOC) — ⚠️ 364/8,000 LOC (5%)
+- [x] Framebuffer graphics library: putPixel, drawRect, fillRect, drawChar (framebuf.zig)
 - [x] Built-in 8x16 bitmap font (ASCII 32-126)
-- [x] 16/24/32 bpp support
 - [x] PS/2 mouse driver with IRQ12 (mouse.zig)
-- [x] Absolute position tracking (640x480)
-- [ ] Window manager (future)
+- [ ] Multiboot2 framebuffer or VESA VBE mode setting
+- [ ] Window manager (windows, title bars, move, resize)
+- [ ] Event queue (mouse/keyboard dispatch to windows)
+- [ ] Terminal emulator window
+- Ref: SerenityOS `Userland/Services/WindowServer/`
 
-### 2-5. TCP implementation ✅
+### 2-5. Full TCP implementation (~3,000 LOC) — ⚠️ existing basic TCP only
 - [x] 3-way handshake (SYN → SYN-ACK → ACK)
 - [x] Data send/receive with PSH/ACK
-- [x] FIN close (FIN_WAIT, CLOSE_WAIT, LAST_ACK)
-- [x] `tcp` shell command (connect + HTTP GET)
-- [ ] Sliding window, retransmission, congestion control (future)
+- [x] FIN close
+- [ ] Sliding window
+- [ ] Retransmission timer (RTO, exponential backoff)
+- [ ] Congestion control (slow start, congestion avoidance)
+- [ ] TIME_WAIT state
+- [ ] Keep-alive
+- [ ] Out-of-order receive buffer
+- Ref: RFC 793, 5681, 6298
 
-### 2-6. DNS + DHCP ✅
+### 2-6. DNS + DHCP (~1,000 LOC) — ✅ 389/1,000 LOC (39%)
 - [x] DNS resolver: A record query/response via UDP (dns.zig)
-- [x] Compression pointer support in DNS responses
+- [x] DNS response compression pointer support
 - [x] DHCP client: DISCOVER/OFFER/REQUEST/ACK (dhcp.zig)
 - [x] DhcpLease struct (IP, gateway, netmask, DNS)
-- [x] `dns` shell command
+- [ ] Integration with network stack (auto-configure IP on boot)
+- [ ] `/etc/resolv.conf` equivalent config
 
-### 2-7. ext2 filesystem ✅
+### 2-7. ext2 filesystem (~3,000 LOC) — ⚠️ 342/3,000 LOC (11%)
 - [x] Superblock parsing (ext2.zig)
 - [x] Block group descriptor table
 - [x] Inode reading (direct + single indirect blocks)
 - [x] Directory listing
-- [x] File data reading
-- [x] `ext2` shell command
+- [x] File data reading (read-only)
+- [ ] Write support (inode/block allocation, directory modification)
+- [ ] Block/inode bitmap management
+- [ ] Double/triple indirect blocks
+- Ref: ext2 spec (Dave Poirier)
 
-### 2-8. Block device layer ✅
+### 2-8. Block device layer (~2,000 LOC) — ⚠️ 111/2,000 LOC (6%)
 - [x] Generic BlockDev struct with read/write function pointers (blkdev.zig)
 - [x] ATA registered as block device
-- [x] `blk` shell command
+- [ ] Page cache (read-ahead, dirty write-back)
+- [ ] AHCI backend
+- [ ] Partition table parsing (MBR, GPT)
 
-### 2-9. USB ✅
+### 2-9. USB (~4,500 LOC) — ⚠️ 153/4,500 LOC (3%)
 - [x] UHCI controller detection via PCI scan (uhci.zig)
 - [x] BAR4 I/O base reading
 - [x] Controller reset
-- [x] `usb` shell command
-- [ ] USB device enumeration, HID, Mass Storage (future)
+- [ ] Frame list and transfer descriptor setup
+- [ ] USB device enumeration (GET_DESCRIPTOR, SET_ADDRESS)
+- [ ] USB HID driver (keyboard, mouse)
+- [ ] USB Mass Storage (read/write USB drives)
+- Ref: USB 2.0 spec, OSDev "USB"
 
-### 2-10. POSIX extensions ✅
+### 2-10. POSIX extensions (~3,000 LOC) — ⚠️ 94/3,000 LOC (3%)
 - [x] dup, dup2 (file descriptor duplication) (posix.zig)
 - [x] lseek (file seek)
 - [x] getcwd, chdir (working directory)
-- [ ] select/poll, shared memory, semaphores, TTY/PTY (future)
+- [ ] select / poll
+- [ ] fcntl
+- [ ] Shared memory (shmget, shmat)
+- [ ] Semaphores
+- [ ] Process groups, sessions
+- [ ] TTY / PTY
 
-### 2-11. Userspace tools ✅
-- [x] 44 shell commands (7 new: acpi, shutdown, smp, dns, ext2, usb, blk)
+### 2-11. Userspace tools (~3,000 LOC) — ⚠️ 130/3,000 LOC (4%)
+- [x] 44 shell commands (7 new MS2 commands)
 - [x] Shell with argument parsing, cwd-aware prompt
-- [ ] libc subset, coreutils, text editor (future)
+- [ ] libc subset (printf, scanf, malloc, string.h, stdlib.h)
+- [ ] Shell improvements (env vars, `$PATH`, redirection `>`, background `&`)
+- [ ] Coreutils: echo, wc, head, tail, grep, sort, uniq
+- [ ] Text editor (ed equivalent)
 
-**Status**: Core subsystems implemented. Advanced features (window manager, full TCP congestion control, USB enumeration, libc) marked for future milestones.
+**Done when**: A GUI terminal window works, DNS resolves, and HTTP GET succeeds
 
 ---
 
@@ -233,7 +267,7 @@ Each milestone builds on the previous one.
 | v0.7 | 4,724 | — | VFS, pipes, TCP/UDP, multi-user, ELF loader |
 | v0.8 | 5,218 | — | fork/wait/signals, VMM, full ISR |
 | v0.9 | 5,647 | **MS1** ✅ | Hierarchical FS, VT100 console, cwd prompt |
-| **v1.0** | **7,582** | **MS2** ✅ | ACPI, SMP, mouse, DNS, DHCP, ext2, USB, framebuffer |
+| v1.0 | 7,582 | MS2 ⚠️ | ACPI, SMP, mouse, DNS, DHCP, ext2, USB, framebuffer (foundations) |
 
 ---
 

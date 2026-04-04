@@ -1,6 +1,6 @@
 # Zig Kernel
 
-An x86 operating system kernel written from scratch in Zig. Started as a minimal 150-line boot stub, now a 7,500+ LOC system with multitasking, networking, filesystems, and more.
+An x86 operating system kernel written from scratch in Zig. Started as a minimal 150-line boot stub, now a 7,500+ LOC system with multitasking, networking, filesystems, and more. Milestone 1 (xv6-grade) complete; Milestone 2 (Hobby OS) foundations in progress.
 
 ## Quick Start
 
@@ -134,9 +134,9 @@ ROADMAP.md          Development roadmap to Linux-scale OS
 | v0.7 | 4,724 | VFS, pipes, TCP/UDP, multi-user, ELF loader |
 | v0.8 | 5,218 | fork/wait/signals, VMM, full ISR |
 | v0.9 | 5,647 | Hierarchical FS, VT100 console |
-| **v1.0** | **7,582** | **ACPI, SMP, mouse, DNS, DHCP, ext2, USB, framebuffer** |
+| **v1.0** | **7,582** | **ACPI, SMP, mouse, DNS, DHCP, ext2, USB, framebuffer (MS2 foundations)** |
 
-See [ROADMAP.md](ROADMAP.md) for the path from here to Linux-scale.
+**Milestone 1** (xv6-grade) is complete. **Milestone 2** (Hobby OS, ~50K LOC) has foundation modules for all 11 subsystems (~6% of scope). See [ROADMAP.md](ROADMAP.md) for the full path from here to Linux-scale.
 
 ## License
 
