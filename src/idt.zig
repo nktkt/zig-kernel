@@ -4,6 +4,7 @@ const vga = @import("vga.zig");
 const keyboard = @import("keyboard.zig");
 const pit = @import("pit.zig");
 const task = @import("task.zig");
+const isr = @import("isr.zig");
 
 const IdtEntry = packed struct {
     base_low: u16,
@@ -60,6 +61,15 @@ fn picRemap() void {
 
 pub fn init() void {
     picRemap();
+
+    // CPU 例外 (ISR 0-14)
+    setGate(0, @intFromPtr(&isr0Stub));
+    setGate(6, @intFromPtr(&isr6Stub));
+    setGate(8, @intFromPtr(&isr8Stub));
+    setGate(13, @intFromPtr(&isr13Stub));
+    setGate(14, @intFromPtr(&isr14Stub));
+
+    // IRQ + syscall
     setGate(32, @intFromPtr(&irq0Stub));
     setGate(33, @intFromPtr(&irq1Stub));
     setGateUser(0x80, @intFromPtr(&syscallStub)); // INT 0x80 (DPL=3)
@@ -124,6 +134,51 @@ fn syscallStub() callconv(.naked) void {
         \\pop %%ecx
         \\pop %%edx
         \\iret
+    );
+}
+
+// CPU例外スタブ (エラーコードなし: push $0, あり: CPUが自動プッシュ)
+fn isr0Stub() callconv(.naked) void {
+    asm volatile ("push $0\n push $0\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
+}
+fn isr6Stub() callconv(.naked) void {
+    asm volatile ("push $0\n push $6\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
+}
+fn isr8Stub() callconv(.naked) void {
+    asm volatile ("push $8\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
+}
+fn isr13Stub() callconv(.naked) void {
+    asm volatile ("push $13\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
+}
+fn isr14Stub() callconv(.naked) void {
+    asm volatile ("push $14\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
+}
+
+export fn isrCommonHandler(vector: u32, error_code: u32) void {
+    isr.handler(vector, error_code);
+}
+
+// ---- I/O ポート操作 ----
+
+pub fn outl(port: u16, val: u32) void {
+    asm volatile ("outl %[val], %[port]"
+        :
+        : [val] "{eax}" (val),
+          [port] "{dx}" (port),
+    );
+}
+
+pub fn inl(port: u16) u32 {
+    return asm volatile ("inl %[port], %[result]"
+        : [result] "={eax}" (-> u32),
+        : [port] "{dx}" (port),
+    );
+}
+
+pub fn inw(port: u16) u16 {
+    return asm volatile ("inw %[port], %[result]"
+        : [result] "={ax}" (-> u16),
+        : [port] "{dx}" (port),
     );
 }
 

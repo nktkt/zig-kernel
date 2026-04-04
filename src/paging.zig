@@ -61,6 +61,20 @@ pub fn init() void {
     );
 }
 
+pub fn mapMMIO(phys_addr: u32) void {
+    const pd_idx = phys_addr >> 22;
+    // 4MB PSE ページ: present + writable + page size + cache disable
+    page_directory[pd_idx] = (phys_addr & 0xFFC00000) | PAGE_PRESENT | PAGE_WRITABLE | (1 << 7) | (1 << 4);
+    // TLB フラッシュ
+    asm volatile (
+        \\mov %%cr3, %%eax
+        \\mov %%eax, %%cr3
+        :
+        :
+        : .{ .eax = true }
+    );
+}
+
 pub fn isEnabled() bool {
     const cr0 = asm volatile ("mov %%cr0, %[cr0]"
         : [cr0] "=r" (-> u32),

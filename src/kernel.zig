@@ -9,6 +9,12 @@ const serial = @import("serial.zig");
 const rtc = @import("rtc.zig");
 const tss = @import("tss.zig");
 const task = @import("task.zig");
+const ramfs = @import("ramfs.zig");
+const pci = @import("pci.zig");
+const ata = @import("ata.zig");
+const fat16 = @import("fat16.zig");
+const e1000 = @import("e1000.zig");
+const net = @import("net.zig");
 const shell = @import("shell.zig");
 
 // Multiboot1 header
@@ -53,11 +59,11 @@ fn logInit(comptime name: []const u8, initFn: anytype) void {
 export fn kmain(mb_info_addr: u32) void {
     vga.init();
     serial.init();
-    serial.write("\n=== Zig Kernel v0.5 boot ===\n");
+    serial.write("\n=== Zig Kernel v0.6 boot ===\n");
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v0.5\n");
+    vga.write("  Zig Kernel v0.6\n");
     vga.write("=================================\n\n");
 
     logInit("[GDT] ", gdt.init);
@@ -91,6 +97,24 @@ export fn kmain(mb_info_addr: u32) void {
     vga.write("OK\n");
 
     logInit("[TASK]", task.init);
+    logInit("[RAMF]", ramfs.init);
+    logInit("[PCI] ", pci.init);
+    logInit("[ATA] ", ata.init);
+    logInit("[FAT] ", fat16.init);
+
+    // ネットワーク (E1000 があれば初期化)
+    vga.setColor(.light_cyan, .black);
+    vga.write("[NET]  ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Initializing... ");
+    if (e1000.init()) {
+        net.init();
+        vga.setColor(.light_green, .black);
+        vga.write("OK\n");
+    } else {
+        vga.setColor(.dark_grey, .black);
+        vga.write("no NIC\n");
+    }
 
     vga.setColor(.light_cyan, .black);
     vga.write("[MEM]  ");
@@ -103,7 +127,7 @@ export fn kmain(mb_info_addr: u32) void {
 
     vga.write("\n");
     vga.setColor(.yellow, .black);
-    vga.write("Type 'help' for commands. 'run' to start user tasks.\n\n");
+    vga.write("Type 'help' for commands.\n\n");
     vga.setColor(.white, .black);
 
     shell.init();

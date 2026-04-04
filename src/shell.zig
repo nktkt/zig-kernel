@@ -9,6 +9,12 @@ const rtc = @import("rtc.zig");
 const serial = @import("serial.zig");
 const task = @import("task.zig");
 const idt = @import("idt.zig");
+const ramfs = @import("ramfs.zig");
+const pci = @import("pci.zig");
+const ata = @import("ata.zig");
+const fat16 = @import("fat16.zig");
+const e1000 = @import("e1000.zig");
+const net = @import("net.zig");
 
 const MAX_INPUT = 256;
 var input_buf: [MAX_INPUT]u8 = undefined;
@@ -58,8 +64,19 @@ fn printPrompt() void {
 }
 
 fn execute(input: []const u8) void {
-    const cmd = trim(input);
-    if (cmd.len == 0) return;
+    const full = trim(input);
+    if (full.len == 0) return;
+
+    // コマンドと引数を分割
+    var split: usize = full.len;
+    for (full, 0..) |c, i| {
+        if (c == ' ') {
+            split = i;
+            break;
+        }
+    }
+    const cmd = full[0..split];
+    const args = if (split < full.len) trim(full[split + 1 ..]) else "";
 
     if (eql(cmd, "help")) {
         cmdHelp();
@@ -91,6 +108,22 @@ fn execute(input: []const u8) void {
         cmdPaging();
     } else if (eql(cmd, "reboot")) {
         cmdReboot();
+    } else if (eql(cmd, "ls")) {
+        cmdLs();
+    } else if (eql(cmd, "cat")) {
+        cmdCat(args);
+    } else if (eql(cmd, "write")) {
+        cmdWrite(args);
+    } else if (eql(cmd, "rm")) {
+        cmdRm(args);
+    } else if (eql(cmd, "lspci")) {
+        cmdLspci();
+    } else if (eql(cmd, "disk")) {
+        cmdDisk();
+    } else if (eql(cmd, "net")) {
+        cmdNet();
+    } else if (eql(cmd, "ping")) {
+        cmdPing(args);
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -102,6 +135,8 @@ fn execute(input: []const u8) void {
     vga.setColor(.white, .black);
 }
 
+// ---- コマンド実装 ----
+
 fn cmdHelp() void {
     vga.setColor(.yellow, .black);
     vga.write("Available commands:\n");
@@ -110,17 +145,25 @@ fn cmdHelp() void {
     vga.write("  clear   - Clear the screen\n");
     vga.write("  mem     - Physical memory status\n");
     vga.write("  heap    - Heap allocator status\n");
-    vga.write("  alloc   - Allocate a 4KB page (PMM)\n");
+    vga.write("  alloc   - Allocate a 4KB page\n");
     vga.write("  free    - Free last allocated page\n");
-    vga.write("  malloc  - Allocate 64 bytes (heap)\n");
-    vga.write("  mfree   - Free last heap allocation\n");
-    vga.write("  uptime  - Show system uptime\n");
-    vga.write("  ticks   - Show raw tick count\n");
-    vga.write("  date    - Show current date/time\n");
-    vga.write("  paging  - Show paging status\n");
+    vga.write("  malloc  - Allocate 64 bytes\n");
+    vga.write("  mfree   - Free last heap alloc\n");
+    vga.write("  uptime  - System uptime\n");
+    vga.write("  ticks   - Raw tick count\n");
+    vga.write("  date    - Current date/time\n");
+    vga.write("  paging  - Paging status\n");
     vga.write("  ps      - List tasks\n");
-    vga.write("  run     - Spawn user space tasks\n");
-    vga.write("  reboot  - Reboot the system\n");
+    vga.write("  run     - Spawn user tasks\n");
+    vga.write("  ls      - List files (ramfs)\n");
+    vga.write("  cat <f> - Show file contents\n");
+    vga.write("  write <f> <text> - Create/write file\n");
+    vga.write("  rm <f>  - Remove file\n");
+    vga.write("  lspci   - List PCI devices\n");
+    vga.write("  disk    - Disk (ATA) info\n");
+    vga.write("  net     - Network status\n");
+    vga.write("  ping <ip> - Send ICMP ping\n");
+    vga.write("  reboot  - Reboot system\n");
 }
 
 fn cmdClear() void {
@@ -158,7 +201,7 @@ fn cmdFree() void {
         last_page_alloc = null;
     } else {
         vga.setColor(.light_red, .black);
-        vga.write("Nothing to free. Use 'alloc' first.\n");
+        vga.write("Nothing to free.\n");
     }
 }
 
@@ -185,7 +228,7 @@ fn cmdMfree() void {
         last_heap_alloc = null;
     } else {
         vga.setColor(.light_red, .black);
-        vga.write("Nothing to free. Use 'malloc' first.\n");
+        vga.write("Nothing to free.\n");
     }
 }
 
@@ -207,21 +250,18 @@ fn cmdPs() void {
 fn cmdRun() void {
     vga.setColor(.light_grey, .black);
     vga.write("Spawning user tasks...\n");
-
     if (task.createUserTask(@intFromPtr(&task.userProgramHello), "hello")) |pid| {
         vga.setColor(.light_green, .black);
         vga.write("Created task 'hello' (pid=");
         pmm.printNum(pid);
         vga.write(")\n");
     }
-
     if (task.createUserTask(@intFromPtr(&task.userProgramCounter), "counter")) |pid| {
         vga.setColor(.light_green, .black);
         vga.write("Created task 'counter' (pid=");
         pmm.printNum(pid);
         vga.write(")\n");
     }
-
     vga.setColor(.yellow, .black);
     vga.write("Tasks scheduled. Use 'ps' to view.\n");
     vga.setColor(.white, .black);
@@ -240,6 +280,145 @@ fn cmdReboot() void {
     vga.setColor(.yellow, .black);
     vga.write("Rebooting...\n");
     idt.outb(0x64, 0xFE);
+}
+
+// ---- ファイルシステムコマンド ----
+
+fn cmdLs() void {
+    ramfs.printList();
+}
+
+fn cmdCat(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: cat <filename>\n");
+        return;
+    }
+    // FAT16ディスクのファイル
+    if (startsWith(args, "/disk/")) {
+        const fname = args[6..];
+        var buf: [2048]u8 = undefined;
+        if (fat16.readFile(fname, &buf)) |len| {
+            vga.write(buf[0..len]);
+        } else {
+            vga.setColor(.light_red, .black);
+            vga.write("File not found on disk: ");
+            vga.write(fname);
+            vga.putChar('\n');
+        }
+        return;
+    }
+    if (ramfs.findByName(args)) |idx| {
+        if (ramfs.getFile(idx)) |f| {
+            vga.write(f.data[0..f.size]);
+        }
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("File not found: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+fn cmdWrite(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: write <filename> <text>\n");
+        return;
+    }
+    // ファイル名とテキストを分割
+    var sp: usize = args.len;
+    for (args, 0..) |c, i| {
+        if (c == ' ') {
+            sp = i;
+            break;
+        }
+    }
+    if (sp >= args.len) {
+        vga.write("Usage: write <filename> <text>\n");
+        return;
+    }
+    const name = args[0..sp];
+    const text = trim(args[sp + 1 ..]);
+
+    const idx = ramfs.findByName(name) orelse ramfs.create(name) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Cannot create file (max reached)\n");
+        return;
+    };
+    const written = ramfs.writeFile(idx, text);
+    vga.setColor(.light_green, .black);
+    vga.write("Wrote ");
+    pmm.printNum(written);
+    vga.write(" bytes to ");
+    vga.write(name);
+    vga.putChar('\n');
+}
+
+fn cmdRm(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: rm <filename>\n");
+        return;
+    }
+    if (ramfs.findByName(args)) |idx| {
+        ramfs.remove(idx);
+        vga.setColor(.light_green, .black);
+        vga.write("Removed: ");
+        vga.write(args);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("File not found: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+// ---- PCI / Disk / Network コマンド ----
+
+fn cmdLspci() void {
+    pci.printDevices();
+}
+
+fn cmdDisk() void {
+    if (ata.isPresent()) {
+        vga.setColor(.light_green, .black);
+        vga.write("ATA Primary Master: detected\n");
+        vga.setColor(.light_grey, .black);
+        fat16.printInfo();
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("No ATA disk detected.\n");
+        vga.setColor(.light_grey, .black);
+        vga.write("Start QEMU with: -hda disk.img\n");
+    }
+}
+
+fn cmdNet() void {
+    if (!e1000.isInitialized()) {
+        vga.setColor(.light_red, .black);
+        vga.write("No network interface.\n");
+        vga.setColor(.light_grey, .black);
+        vga.write("Start QEMU with: -device e1000,netdev=n0 -netdev user,id=n0\n");
+        return;
+    }
+    net.printStatus();
+}
+
+fn cmdPing(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: ping <ip>\n");
+        return;
+    }
+    if (!e1000.isInitialized()) {
+        vga.setColor(.light_red, .black);
+        vga.write("No network interface.\n");
+        return;
+    }
+    const ip = net.parseIp(args) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid IP address\n");
+        return;
+    };
+    net.ping(ip);
 }
 
 // ---- ユーティリティ ----
@@ -271,4 +450,9 @@ fn trim(s: []const u8) []const u8 {
     var end: usize = s.len;
     while (end > start and s[end - 1] == ' ') : (end -= 1) {}
     return s[start..end];
+}
+
+fn startsWith(s: []const u8, prefix: []const u8) bool {
+    if (s.len < prefix.len) return false;
+    return eql(s[0..prefix.len], prefix);
 }
