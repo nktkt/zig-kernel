@@ -21,6 +21,13 @@ const vfs = @import("vfs.zig");
 const pipe_mod = @import("pipe.zig");
 const user = @import("user.zig");
 const shell = @import("shell.zig");
+const acpi = @import("acpi.zig");
+const smp = @import("smp.zig");
+const mouse = @import("mouse.zig");
+const blkdev = @import("blkdev.zig");
+const ext2 = @import("ext2.zig");
+const uhci = @import("uhci.zig");
+const dns = @import("dns.zig");
 
 // Multiboot1 header
 const MULTIBOOT_MAGIC = 0x1BADB002;
@@ -64,11 +71,11 @@ fn logInit(comptime name: []const u8, initFn: anytype) void {
 export fn kmain(mb_info_addr: u32) void {
     vga.init();
     serial.init();
-    serial.write("\n=== Zig Kernel v0.7 boot ===\n");
+    serial.write("\n=== Zig Kernel v1.0 boot ===\n");
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v0.7\n");
+    vga.write("  Zig Kernel v1.0\n");
     vga.write("=================================\n\n");
 
     logInit("[GDT] ", gdt.init);
@@ -125,6 +132,19 @@ export fn kmain(mb_info_addr: u32) void {
     } else {
         vga.setColor(.dark_grey, .black);
         vga.write("no NIC\n");
+    }
+
+    // Milestone 2
+    logInit("[BLK] ", blkdev.init);
+    logInit("[EXT2]", ext2.init);
+    logInit("[ACPI]", acpi.init);
+    logInit("[SMP] ", smp.init);
+    logInit("[UHCI]", uhci.init);
+    logInit("[MOUS]", mouse.init);
+
+    // DNS (ネットワーク依存)
+    if (e1000.isInitialized()) {
+        logInit("[DNS] ", dns.init);
     }
 
     vga.setColor(.light_cyan, .black);

@@ -20,6 +20,12 @@ const elf = @import("elf.zig");
 const user = @import("user.zig");
 const tcp = @import("tcp.zig");
 const pipe = @import("pipe.zig");
+const acpi = @import("acpi.zig");
+const smp = @import("smp.zig");
+const dns = @import("dns.zig");
+const ext2 = @import("ext2.zig");
+const uhci = @import("uhci.zig");
+const blkdev = @import("blkdev.zig");
 
 const MAX_INPUT = 256;
 var input_buf: [MAX_INPUT]u8 = undefined;
@@ -173,6 +179,20 @@ fn execute(input: []const u8) void {
         cmdFork();
     } else if (eql(cmd, "kill")) {
         cmdKill(args);
+    } else if (eql(cmd, "acpi")) {
+        cmdAcpi();
+    } else if (eql(cmd, "shutdown")) {
+        cmdShutdown();
+    } else if (eql(cmd, "smp")) {
+        cmdSmp();
+    } else if (eql(cmd, "dns")) {
+        cmdDns(args);
+    } else if (eql(cmd, "ext2")) {
+        cmdExt2();
+    } else if (eql(cmd, "usb")) {
+        cmdUsb();
+    } else if (eql(cmd, "blk")) {
+        cmdBlk();
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -228,6 +248,13 @@ fn cmdHelp() void {
     vga.write("  fork    - Fork test (parent+child)\n");
     vga.write("  kill <pid> - Kill process\n");
     vga.write("  reboot  - Reboot system\n");
+    vga.write("  acpi    - ACPI info\n");
+    vga.write("  shutdown - ACPI shutdown\n");
+    vga.write("  smp     - CPU/SMP info\n");
+    vga.write("  dns <h> - DNS resolve\n");
+    vga.write("  ext2    - ext2 filesystem info\n");
+    vga.write("  usb     - USB controller info\n");
+    vga.write("  blk     - Block devices\n");
 }
 
 fn cmdClear() void {
@@ -791,6 +818,71 @@ fn cmdKill(args: []const u8) void {
         vga.setColor(.light_red, .black);
         vga.write("Process not found\n");
     }
+}
+
+// ---- Milestone 2 コマンド ----
+
+fn cmdAcpi() void {
+    acpi.printInfo();
+}
+
+fn cmdShutdown() void {
+    vga.setColor(.yellow, .black);
+    vga.write("Shutting down...\n");
+    acpi.shutdown();
+}
+
+fn cmdSmp() void {
+    smp.printInfo();
+}
+
+fn cmdDns(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: dns <hostname>\n");
+        return;
+    }
+    if (!e1000.isInitialized()) {
+        vga.setColor(.light_red, .black);
+        vga.write("No network interface\n");
+        return;
+    }
+    vga.setColor(.light_grey, .black);
+    vga.write("Resolving ");
+    vga.write(args);
+    vga.write("...\n");
+    if (dns.resolve(args)) |ip| {
+        vga.setColor(.light_green, .black);
+        vga.write("  IP: ");
+        pmm.printNum((ip >> 24) & 0xFF);
+        vga.putChar('.');
+        pmm.printNum((ip >> 16) & 0xFF);
+        vga.putChar('.');
+        pmm.printNum((ip >> 8) & 0xFF);
+        vga.putChar('.');
+        pmm.printNum(ip & 0xFF);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("  Resolution failed\n");
+    }
+}
+
+fn cmdExt2() void {
+    ext2.printInfo();
+    if (ext2.isValid()) {
+        vga.setColor(.yellow, .black);
+        vga.write("Root directory:\n");
+        vga.setColor(.light_grey, .black);
+        ext2.listRoot();
+    }
+}
+
+fn cmdUsb() void {
+    uhci.printInfo();
+}
+
+fn cmdBlk() void {
+    blkdev.printDevices();
 }
 
 fn parseU16(s: []const u8) ?u16 {
