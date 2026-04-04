@@ -5,6 +5,8 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .x86,
         .os_tag = .freestanding,
         .abi = .none,
+        // カーネル空間では SSE/AVX を無効化
+        .cpu_features_sub = std.Target.x86.featureSet(&.{ .sse, .sse2, .avx }),
     });
 
     const module = b.createModule(.{
