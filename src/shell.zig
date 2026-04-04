@@ -68,6 +68,12 @@ fn printPrompt() void {
     vga.setColor(.light_cyan, .black);
     vga.write("zig-os");
     vga.setColor(.light_grey, .black);
+    vga.putChar(':');
+    vga.setColor(.light_blue, .black);
+    var path_buf: [128]u8 = undefined;
+    const plen = ramfs.getCwdPath(&path_buf);
+    vga.write(path_buf[0..plen]);
+    vga.setColor(.light_grey, .black);
     if (user.isRoot()) {
         vga.write("# ");
     } else {
@@ -157,6 +163,12 @@ fn execute(input: []const u8) void {
         cmdPipe();
     } else if (eql(cmd, "tcp")) {
         cmdTcp(args);
+    } else if (eql(cmd, "mkdir")) {
+        cmdMkdir(args);
+    } else if (eql(cmd, "cd")) {
+        cmdCd(args);
+    } else if (eql(cmd, "pwd")) {
+        cmdPwd();
     } else if (eql(cmd, "fork")) {
         cmdFork();
     } else if (eql(cmd, "kill")) {
@@ -210,6 +222,9 @@ fn cmdHelp() void {
     vga.write("  stat <f> - File info\n");
     vga.write("  pipe    - Pipe demo\n");
     vga.write("  tcp <ip:port> - TCP connect\n");
+    vga.write("  mkdir <d> - Create directory\n");
+    vga.write("  cd <d>  - Change directory\n");
+    vga.write("  pwd     - Print working directory\n");
     vga.write("  fork    - Fork test (parent+child)\n");
     vga.write("  kill <pid> - Kill process\n");
     vga.write("  reboot  - Reboot system\n");
@@ -704,6 +719,42 @@ fn cmdTcp(args: []const u8) void {
         vga.setColor(.light_red, .black);
         vga.write("Connection failed\n");
     }
+}
+
+fn cmdMkdir(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: mkdir <name>\n");
+        return;
+    }
+    if (ramfs.mkdir(args)) {
+        vga.setColor(.light_green, .black);
+        vga.write("Created directory: ");
+        vga.write(args);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Failed to create directory\n");
+    }
+}
+
+fn cmdCd(args: []const u8) void {
+    if (args.len == 0) {
+        _ = ramfs.chdir("/");
+        return;
+    }
+    if (!ramfs.chdir(args)) {
+        vga.setColor(.light_red, .black);
+        vga.write("No such directory: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+fn cmdPwd() void {
+    var buf: [128]u8 = undefined;
+    const len = ramfs.getCwdPath(&buf);
+    vga.write(buf[0..len]);
+    vga.putChar('\n');
 }
 
 fn cmdFork() void {
