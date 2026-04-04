@@ -4,6 +4,9 @@ const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const pit = @import("pit.zig");
 const heap = @import("heap.zig");
+const paging = @import("paging.zig");
+const serial = @import("serial.zig");
+const rtc = @import("rtc.zig");
 const shell = @import("shell.zig");
 
 // Multiboot1 header
@@ -18,11 +21,10 @@ export const multiboot_header align(4) linksection(".multiboot") = [3]u32{
     @truncate(0 -% (@as(u64, MULTIBOOT_MAGIC) + MULTIBOOT_FLAGS)),
 };
 
-// Multiboot info structure (部分的)
 const MultibootInfo = extern struct {
     flags: u32,
-    mem_lower: u32, // KB (0 - 640KB)
-    mem_upper: u32, // KB (1MB 以降)
+    mem_lower: u32,
+    mem_upper: u32,
 };
 
 export fn _start() callconv(.naked) noreturn {
@@ -35,32 +37,34 @@ export fn _start() callconv(.naked) noreturn {
     );
 }
 
+fn initSubsystem(comptime name: []const u8, initFn: anytype) void {
+    vga.setColor(.light_cyan, .black);
+    vga.write(name);
+    vga.setColor(.light_grey, .black);
+    vga.write(" Initializing... ");
+    initFn();
+    vga.setColor(.light_green, .black);
+    vga.write("OK\n");
+    serial.write(name ++ " OK\n");
+}
+
 export fn kmain(mb_info_addr: u32) void {
     vga.init();
+    serial.init();
+
+    serial.write("\n=== Zig Kernel v0.4 boot ===\n");
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v0.3\n");
+    vga.write("  Zig Kernel v0.4\n");
     vga.write("=================================\n\n");
 
-    vga.setColor(.light_cyan, .black);
-    vga.write("[GDT] ");
-    vga.setColor(.light_grey, .black);
-    vga.write("Initializing... ");
-    gdt.init();
-    vga.setColor(.light_green, .black);
-    vga.write("OK\n");
+    initSubsystem("[GDT] ", gdt.init);
+    initSubsystem("[IDT] ", idt.init);
 
+    // PMM (Multiboot 情報が必要)
     vga.setColor(.light_cyan, .black);
-    vga.write("[IDT] ");
-    vga.setColor(.light_grey, .black);
-    vga.write("Initializing... ");
-    idt.init();
-    vga.setColor(.light_green, .black);
-    vga.write("OK\n");
-
-    vga.setColor(.light_cyan, .black);
-    vga.write("[PMM] ");
+    vga.write("[PMM]  ");
     vga.setColor(.light_grey, .black);
     vga.write("Initializing... ");
     if (mb_info_addr != 0) {
@@ -71,27 +75,20 @@ export fn kmain(mb_info_addr: u32) void {
     }
     vga.setColor(.light_green, .black);
     vga.write("OK\n");
+    serial.write("[PMM]  OK\n");
+
+    initSubsystem("[PIT] ", pit.init);
+    initSubsystem("[HEAP]", heap.init);
+    initSubsystem("[PAGE]", paging.init);
 
     vga.setColor(.light_cyan, .black);
-    vga.write("[PIT] ");
-    vga.setColor(.light_grey, .black);
-    vga.write("Initializing... ");
-    pit.init();
-    vga.setColor(.light_green, .black);
-    vga.write("OK\n");
-
-    vga.setColor(.light_cyan, .black);
-    vga.write("[HEAP]");
-    vga.setColor(.light_grey, .black);
-    vga.write(" Initializing... ");
-    heap.init();
-    vga.setColor(.light_green, .black);
-    vga.write("OK\n");
-
-    vga.setColor(.light_cyan, .black);
-    vga.write("[MEM] ");
+    vga.write("[MEM]  ");
     vga.setColor(.light_grey, .black);
     pmm.printStatus();
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("[RTC]  ");
+    rtc.printDateTime();
 
     vga.write("\n");
     vga.setColor(.yellow, .black);

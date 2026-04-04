@@ -4,6 +4,9 @@ const vga = @import("vga.zig");
 const pmm = @import("pmm.zig");
 const pit = @import("pit.zig");
 const heap = @import("heap.zig");
+const paging = @import("paging.zig");
+const rtc = @import("rtc.zig");
+const serial = @import("serial.zig");
 const idt = @import("idt.zig");
 
 const MAX_INPUT = 256;
@@ -77,6 +80,10 @@ fn execute(input: []const u8) void {
         cmdUptime();
     } else if (eql(cmd, "ticks")) {
         cmdTicks();
+    } else if (eql(cmd, "date")) {
+        cmdDate();
+    } else if (eql(cmd, "paging")) {
+        cmdPaging();
     } else if (eql(cmd, "reboot")) {
         cmdReboot();
     } else {
@@ -104,6 +111,8 @@ fn cmdHelp() void {
     vga.write("  mfree   - Free last heap allocation\n");
     vga.write("  uptime  - Show system uptime\n");
     vga.write("  ticks   - Show raw tick count\n");
+    vga.write("  date    - Show current date/time\n");
+    vga.write("  paging  - Show paging status\n");
     vga.write("  reboot  - Reboot the system\n");
 }
 
@@ -182,6 +191,14 @@ fn cmdTicks() void {
     vga.write("Ticks: ");
     pmm.printNum(@truncate(pit.getTicks()));
     vga.putChar('\n');
+}
+
+fn cmdDate() void {
+    rtc.printDateTime();
+}
+
+fn cmdPaging() void {
+    paging.printStatus();
 }
 
 fn cmdReboot() void {
