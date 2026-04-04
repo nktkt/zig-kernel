@@ -62,12 +62,25 @@ fn picRemap() void {
 pub fn init() void {
     picRemap();
 
-    // CPU 例外 (ISR 0-14)
+    // CPU 例外 (ISR 0-19)
     setGate(0, @intFromPtr(&isr0Stub));
+    setGate(1, @intFromPtr(&isr1Stub));
+    setGate(2, @intFromPtr(&isr2Stub));
+    setGate(3, @intFromPtr(&isr3Stub));
+    setGate(4, @intFromPtr(&isr4Stub));
+    setGate(5, @intFromPtr(&isr5Stub));
     setGate(6, @intFromPtr(&isr6Stub));
+    setGate(7, @intFromPtr(&isr7Stub));
     setGate(8, @intFromPtr(&isr8Stub));
+    setGate(10, @intFromPtr(&isr10Stub));
+    setGate(11, @intFromPtr(&isr11Stub));
+    setGate(12, @intFromPtr(&isr12Stub));
     setGate(13, @intFromPtr(&isr13Stub));
     setGate(14, @intFromPtr(&isr14Stub));
+    setGate(16, @intFromPtr(&isr16Stub));
+    setGate(17, @intFromPtr(&isr17Stub));
+    setGate(18, @intFromPtr(&isr18Stub));
+    setGate(19, @intFromPtr(&isr19Stub));
 
     // IRQ + syscall
     setGate(32, @intFromPtr(&irq0Stub));
@@ -153,6 +166,20 @@ fn isr13Stub() callconv(.naked) void {
 fn isr14Stub() callconv(.naked) void {
     asm volatile ("push $14\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
 }
+// Additional exception stubs
+fn isr1Stub() callconv(.naked) void { asm volatile ("push $0\n push $1\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr2Stub() callconv(.naked) void { asm volatile ("push $0\n push $2\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr3Stub() callconv(.naked) void { asm volatile ("push $0\n push $3\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr4Stub() callconv(.naked) void { asm volatile ("push $0\n push $4\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr5Stub() callconv(.naked) void { asm volatile ("push $0\n push $5\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr7Stub() callconv(.naked) void { asm volatile ("push $0\n push $7\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr16Stub() callconv(.naked) void { asm volatile ("push $0\n push $16\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr18Stub() callconv(.naked) void { asm volatile ("push $0\n push $18\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr19Stub() callconv(.naked) void { asm volatile ("push $0\n push $19\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr10Stub() callconv(.naked) void { asm volatile ("push $10\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr11Stub() callconv(.naked) void { asm volatile ("push $11\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr12Stub() callconv(.naked) void { asm volatile ("push $12\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
+fn isr17Stub() callconv(.naked) void { asm volatile ("push $17\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
 
 export fn isrCommonHandler(vector: u32, error_code: u32) void {
     isr.handler(vector, error_code);

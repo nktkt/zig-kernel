@@ -157,6 +157,10 @@ fn execute(input: []const u8) void {
         cmdPipe();
     } else if (eql(cmd, "tcp")) {
         cmdTcp(args);
+    } else if (eql(cmd, "fork")) {
+        cmdFork();
+    } else if (eql(cmd, "kill")) {
+        cmdKill(args);
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -206,6 +210,8 @@ fn cmdHelp() void {
     vga.write("  stat <f> - File info\n");
     vga.write("  pipe    - Pipe demo\n");
     vga.write("  tcp <ip:port> - TCP connect\n");
+    vga.write("  fork    - Fork test (parent+child)\n");
+    vga.write("  kill <pid> - Kill process\n");
     vga.write("  reboot  - Reboot system\n");
 }
 
@@ -697,6 +703,42 @@ fn cmdTcp(args: []const u8) void {
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Connection failed\n");
+    }
+}
+
+fn cmdFork() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Spawning fork test task...\n");
+    if (task.createUserTask(@intFromPtr(&task.userProgramForkTest), "forktest")) |pid| {
+        vga.setColor(.light_green, .black);
+        vga.write("Created fork test (pid=");
+        pmm.printNum(pid);
+        vga.write(")\n");
+        task.enableScheduling();
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Failed to create task\n");
+    }
+}
+
+fn cmdKill(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: kill <pid>\n");
+        return;
+    }
+    const pid = parseU16(args) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid PID\n");
+        return;
+    };
+    if (task.sendSignal(pid, task.SIG_KILL)) {
+        vga.setColor(.light_green, .black);
+        vga.write("Killed pid ");
+        pmm.printNum(pid);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Process not found\n");
     }
 }
 
