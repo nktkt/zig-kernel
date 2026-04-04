@@ -82,6 +82,16 @@ pub fn write(msg: []const u8) void {
     }
 }
 
+pub fn backspace() void {
+    if (col > 0) {
+        col -= 1;
+    } else if (row > 0) {
+        row -= 1;
+        col = VGA_WIDTH - 1;
+    }
+    buffer[row * VGA_WIDTH + col] = makeEntry(' ', color);
+}
+
 fn scroll() void {
     for (1..VGA_HEIGHT) |y| {
         for (0..VGA_WIDTH) |x| {

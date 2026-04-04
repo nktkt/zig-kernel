@@ -80,7 +80,7 @@ fn clearBit(page: usize) void {
     bitmap[page / 32] &= ~(@as(u32, 1) << @truncate(page % 32));
 }
 
-fn printNum(n: usize) void {
+pub fn printNum(n: usize) void {
     if (n == 0) {
         vga.putChar('0');
         return;

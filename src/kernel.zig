@@ -2,6 +2,7 @@ const vga = @import("vga.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
+const shell = @import("shell.zig");
 
 // Multiboot1 header
 const MULTIBOOT_MAGIC = 0x1BADB002;
@@ -76,8 +77,10 @@ export fn kmain(mb_info_addr: u32) void {
 
     vga.write("\n");
     vga.setColor(.yellow, .black);
-    vga.write("Keyboard active. Type something:\n");
+    vga.write("Type 'help' for available commands.\n\n");
     vga.setColor(.white, .black);
+
+    shell.init();
 }
 
 // stack_top はリンカスクリプトで定義

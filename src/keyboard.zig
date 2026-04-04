@@ -1,7 +1,7 @@
-// PS/2 キーボードドライバ — スキャンコードを ASCII に変換して表示
+// PS/2 キーボードドライバ — スキャンコードを ASCII に変換してシェルに送る
 
 const idt = @import("idt.zig");
-const vga = @import("vga.zig");
+const shell = @import("shell.zig");
 
 const KBD_DATA_PORT = 0x60;
 
@@ -30,6 +30,6 @@ pub fn handleIrq() void {
 
     const ascii = scancode_table[scancode];
     if (ascii != 0) {
-        vga.putChar(ascii);
+        shell.handleKey(ascii);
     }
 }
