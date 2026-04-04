@@ -1,255 +1,256 @@
 # Zig Kernel Roadmap
 
-x86 カーネルを段階的に拡張し、Linux 級の OS を目指すロードマップ。
-各マイルストーンは前段階の完了を前提とする。
+A step-by-step roadmap for growing an x86 kernel written in Zig toward a Linux-scale operating system.
+Each milestone builds on the previous one.
 
-## 現在地
+## Current State
 
-- **v0.7** — 4,724 LOC / 22 ファイル
-- 到達レベル: 教育 OS (Phase 2 完了)
+- **v0.7** — 4,724 LOC / 22 source files
+- Level: Educational OS (Phase 2 complete)
+- Features: preemptive multitasking, syscalls, ramfs, FAT16 R/W, PCI, ATA, E1000 NIC, ARP/IPv4/ICMP/TCP/UDP, VFS, pipes, multi-user
 
 ---
 
-## Milestone 1: xv6 級 — ~10,000 LOC
+## Milestone 1: xv6-grade — ~10,000 LOC
 
-**目標**: fork/exec が動く UNIX ライクなカーネル。プロセス分離、階層FS、シグナル。
+**Goal**: A UNIX-like kernel with fork/exec, process isolation, hierarchical filesystem, and signals.
 
-### 1-1. per-process ページテーブル (~800 LOC)
-- [ ] プロセスごとのページディレクトリ作成
-- [ ] カーネル空間 (上位) + ユーザー空間 (下位) の分離
-- [ ] コンテキストスイッチ時に CR3 切替
-- [ ] ユーザー空間へのマッピング API (`map_page`, `unmap_page`)
-- 参考: xv6 `vm.c`
+### 1-1. Per-process page tables (~800 LOC)
+- [ ] Create per-process page directory
+- [ ] Separate kernel space (upper) and user space (lower)
+- [ ] Switch CR3 on context switch
+- [ ] User-space mapping API (`map_page`, `unmap_page`)
+- Ref: xv6 `vm.c`
 
 ### 1-2. fork (~600 LOC)
-- [ ] プロセス複製 (ページテーブル + スタック + レジスタコピー)
-- [ ] Copy-on-Write (CoW) ページフォルト連携
-- [ ] PID 管理の強化 (プロセスツリー, PPID)
-- [ ] SYS_FORK syscall 追加
-- 参考: xv6 `proc.c:fork()`
+- [ ] Duplicate process (page tables + stack + registers)
+- [ ] Copy-on-Write (CoW) with page fault handler
+- [ ] Enhanced PID management (process tree, PPID)
+- [ ] Add SYS_FORK syscall
+- Ref: xv6 `proc.c:fork()`
 
 ### 1-3. exec (~400 LOC)
-- [ ] ELF を独立アドレス空間にロード
-- [ ] ユーザースタック再構築 (argc, argv)
-- [ ] 古いアドレス空間の解放
-- [ ] SYS_EXEC syscall 追加
-- 参考: xv6 `exec.c`
+- [ ] Load ELF into independent address space
+- [ ] Rebuild user stack (argc, argv)
+- [ ] Release old address space
+- [ ] Add SYS_EXEC syscall
+- Ref: xv6 `exec.c`
 
-### 1-4. wait/exit/signal (~500 LOC)
-- [ ] SYS_WAIT (子プロセス終了待ち + 終了コード取得)
-- [ ] 親プロセス終了時の orphan reaping (init が引き取る)
-- [ ] シグナル基盤: SIGKILL, SIGTERM, SIGINT
-- [ ] Ctrl+C → SIGINT 送信
-- 参考: xv6 `proc.c:wait()`, `kill()`
+### 1-4. wait / exit / signals (~500 LOC)
+- [ ] SYS_WAIT (wait for child + collect exit code)
+- [ ] Orphan reaping (init adopts orphaned children)
+- [ ] Signal infrastructure: SIGKILL, SIGTERM, SIGINT
+- [ ] Ctrl+C sends SIGINT
+- Ref: xv6 `proc.c:wait()`, `kill()`
 
-### 1-5. ファイルシステム改善 (~800 LOC)
-- [ ] inode ベースの設計 (inode テーブル, ブロックビットマップ)
-- [ ] ディレクトリ階層 (mkdir, rmdir, chdir, getcwd)
-- [ ] パス解決 (`/dir/subdir/file`)
-- [ ] `.` と `..` エントリ
-- 参考: xv6 `fs.c`
+### 1-5. Filesystem improvements (~800 LOC)
+- [ ] Inode-based design (inode table, block bitmap)
+- [ ] Directory hierarchy (mkdir, rmdir, chdir, getcwd)
+- [ ] Path resolution (`/dir/subdir/file`)
+- [ ] `.` and `..` entries
+- Ref: xv6 `fs.c`
 
-### 1-6. コンソール改善 (~500 LOC)
-- [ ] VT100 エスケープシーケンス (\033[H, \033[2J, カラー, カーソル移動)
-- [ ] 行バッファリング (canonical mode)
+### 1-6. Console improvements (~500 LOC)
+- [ ] VT100 escape sequences (\033[H, \033[2J, colors, cursor movement)
+- [ ] Line buffering (canonical mode)
 - [ ] Ctrl+D (EOF), Ctrl+C (interrupt)
-- 参考: Linux `drivers/tty/vt/`
+- Ref: Linux `drivers/tty/vt/`
 
-### 1-7. 例外ハンドラ完全 + デバッグ (~300 LOC)
-- [ ] ISR 0-31 全登録
-- [ ] スタックトレース表示 (EBP チェーン)
-- [ ] ページフォルトでの詳細表示 (read/write, user/kernel)
-- [ ] panic() 関数 + シリアルダンプ
+### 1-7. Complete exception handlers + debugging (~300 LOC)
+- [ ] Register ISR 0-31
+- [ ] Stack trace display (EBP chain walk)
+- [ ] Detailed page fault info (read/write, user/kernel)
+- [ ] `panic()` function + serial dump
 
-### 1-8. init プロセス (~200 LOC)
-- [ ] カーネルが PID=1 の init を自動起動
-- [ ] init が /bin/sh (シェル) を fork+exec
-- [ ] ゾンビプロセスの回収
+### 1-8. init process (~200 LOC)
+- [ ] Kernel auto-starts PID=1 init process
+- [ ] init fork+exec's /bin/sh (shell)
+- [ ] Zombie process reaping
 
-### 1-9. テスト基盤 (~500 LOC)
-- [ ] カーネル内セルフテスト (メモリ, スケジューラ, FS)
-- [ ] QEMU 自動テストスクリプト (シリアル出力検証)
-- [ ] CI (GitHub Actions) 設定
+### 1-9. Test infrastructure (~500 LOC)
+- [ ] In-kernel self-tests (memory, scheduler, FS)
+- [ ] QEMU automated test scripts (serial output verification)
+- [ ] CI setup (GitHub Actions)
 
-**完了条件**: `fork` でシェルを起動し、`ls`, `cat` が子プロセスで動く
+**Done when**: `fork` spawns a shell, and `ls`/`cat` run as child processes
 
 ---
 
 ## Milestone 2: Hobby OS — ~50,000 LOC
 
-**目標**: GUI、完全な TCP、USB、x86_64。趣味で常用できるレベル。
+**Goal**: GUI, full TCP, USB, x86_64. Usable as a daily-driver hobby OS.
 
-### 2-1. x86_64 移行 (~3,000 LOC)
-- [ ] Long mode 遷移 (GDT64, CR4.PAE, EFER.LME, CR0.PG)
-- [ ] 64-bit ページテーブル (4-level: PML4→PDPT→PD→PT)
-- [ ] syscall/sysret (STAR/LSTAR MSR)
+### 2-1. x86_64 migration (~3,000 LOC)
+- [ ] Long mode transition (GDT64, CR4.PAE, EFER.LME, CR0.PG)
+- [ ] 64-bit page tables (4-level: PML4 → PDPT → PD → PT)
+- [ ] syscall/sysret via STAR/LSTAR MSR
 - [ ] 64-bit TSS
-- [ ] build.zig ターゲットを x86_64 に変更
-- 参考: OSDev "Setting Up Long Mode"
+- [ ] Update build.zig target to x86_64
+- Ref: OSDev "Setting Up Long Mode"
 
-### 2-2. SMP 基礎 (~2,000 LOC)
-- [ ] MP テーブル / ACPI MADT 解析 → AP 数検出
-- [ ] AP (Application Processor) 起動 (INIT-SIPI-SIPI)
-- [ ] per-CPU 変数 (GS ベース)
-- [ ] spinlock, ticket lock
-- [ ] スケジューラの SMP 対応 (per-CPU run queue)
-- 参考: OSDev "Symmetric Multiprocessing"
+### 2-2. SMP basics (~2,000 LOC)
+- [ ] Parse MP table / ACPI MADT to detect AP count
+- [ ] AP (Application Processor) startup (INIT-SIPI-SIPI)
+- [ ] Per-CPU variables (GS base)
+- [ ] Spinlock, ticket lock
+- [ ] SMP-aware scheduler (per-CPU run queues)
+- Ref: OSDev "Symmetric Multiprocessing"
 
-### 2-3. ACPI 基礎 (~2,000 LOC)
-- [ ] RSDP/RSDT/XSDT 探索
-- [ ] MADT (APIC 情報)
-- [ ] FADT (電源制御)
-- [ ] shutdown / reboot (ACPI 経由)
-- [ ] Local APIC + I/O APIC (PIC 置き換え)
-- 参考: ACPI spec, OSDev "APIC"
+### 2-3. ACPI basics (~2,000 LOC)
+- [ ] RSDP / RSDT / XSDT discovery
+- [ ] MADT parsing (APIC info)
+- [ ] FADT parsing (power control)
+- [ ] Shutdown / reboot via ACPI
+- [ ] Local APIC + I/O APIC (replace legacy PIC)
+- Ref: ACPI spec, OSDev "APIC"
 
-### 2-4. フレームバッファ + GUI (~8,000 LOC)
-- [ ] Multiboot2 フレームバッファ or VESA VBE モード設定
-- [ ] ピクセル描画 (putpixel, line, rect, fill)
-- [ ] ビットマップフォントレンダリング
-- [ ] マウスドライバ (PS/2)
-- [ ] ウィンドウマネージャ (ウィンドウ, タイトルバー, 移動, リサイズ)
-- [ ] イベントキュー (マウス/キーボード → ウィンドウ配送)
-- [ ] ターミナルエミュレータウィンドウ
-- 参考: SerenityOS `Userland/Services/WindowServer/`
+### 2-4. Framebuffer + GUI (~8,000 LOC)
+- [ ] Multiboot2 framebuffer or VESA VBE mode setting
+- [ ] Pixel drawing primitives (putpixel, line, rect, fill)
+- [ ] Bitmap font rendering
+- [ ] PS/2 mouse driver
+- [ ] Window manager (windows, title bars, move, resize)
+- [ ] Event queue (mouse/keyboard dispatch to windows)
+- [ ] Terminal emulator window
+- Ref: SerenityOS `Userland/Services/WindowServer/`
 
-### 2-5. TCP 完全実装 (~3,000 LOC)
-- [ ] スライディングウィンドウ
-- [ ] 再送タイマー (RTO, exponential backoff)
-- [ ] 輻輳制御 (slow start, congestion avoidance)
-- [ ] TIME_WAIT ステート
-- [ ] keep-alive
-- [ ] out-of-order 受信バッファ
-- [ ] URG/PSH フラグ処理
-- 参考: RFC 793, 5681, 6298
+### 2-5. Full TCP implementation (~3,000 LOC)
+- [ ] Sliding window
+- [ ] Retransmission timer (RTO, exponential backoff)
+- [ ] Congestion control (slow start, congestion avoidance)
+- [ ] TIME_WAIT state
+- [ ] Keep-alive
+- [ ] Out-of-order receive buffer
+- [ ] URG/PSH flag handling
+- Ref: RFC 793, 5681, 6298
 
 ### 2-6. DNS + DHCP (~1,000 LOC)
-- [ ] DHCP クライアント (DISCOVER→OFFER→REQUEST→ACK)
-- [ ] DNS リゾルバ (A レコード, UDP query)
-- [ ] `/etc/resolv.conf` 相当の設定
-- 参考: RFC 2131 (DHCP), RFC 1035 (DNS)
+- [ ] DHCP client (DISCOVER → OFFER → REQUEST → ACK)
+- [ ] DNS resolver (A record, UDP query)
+- [ ] `/etc/resolv.conf` equivalent config
+- Ref: RFC 2131 (DHCP), RFC 1035 (DNS)
 
-### 2-7. ext2 ファイルシステム (~3,000 LOC)
-- [ ] スーパーブロック解析
-- [ ] ブロックグループディスクリプタ
-- [ ] inode 読み書き (direct + indirect blocks)
-- [ ] ディレクトリ操作 (lookup, create, unlink)
-- [ ] ファイル読み書き (ブロック割当/解放)
-- [ ] ブロック/inode ビットマップ管理
-- 参考: ext2 spec (Dave Poirier)
+### 2-7. ext2 filesystem (~3,000 LOC)
+- [ ] Superblock parsing
+- [ ] Block group descriptors
+- [ ] Inode read/write (direct + indirect blocks)
+- [ ] Directory operations (lookup, create, unlink)
+- [ ] File read/write (block alloc/free)
+- [ ] Block/inode bitmap management
+- Ref: ext2 spec (Dave Poirier)
 
-### 2-8. ブロックデバイスレイヤー (~2,000 LOC)
-- [ ] 汎用ブロック I/O インタフェース
-- [ ] ページキャッシュ (read-ahead, dirty write-back)
-- [ ] ATA/AHCI バックエンド抽象化
-- [ ] パーティションテーブル (MBR, GPT) 解析
+### 2-8. Block device layer (~2,000 LOC)
+- [ ] Generic block I/O interface
+- [ ] Page cache (read-ahead, dirty write-back)
+- [ ] ATA/AHCI backend abstraction
+- [ ] Partition table parsing (MBR, GPT)
 
 ### 2-9. USB (~4,500 LOC)
-- [ ] PCI から USB ホストコントローラ検出
-- [ ] UHCI or OHCI ドライバ (USB 1.x)
-- [ ] USB デバイス列挙 (GET_DESCRIPTOR, SET_ADDRESS)
-- [ ] USB HID ドライバ (キーボード, マウス)
-- [ ] USB Mass Storage (USB メモリ読み書き)
-- 参考: USB 2.0 spec, OSDev "USB"
+- [ ] Detect USB host controllers via PCI
+- [ ] UHCI or OHCI driver (USB 1.x)
+- [ ] USB device enumeration (GET_DESCRIPTOR, SET_ADDRESS)
+- [ ] USB HID driver (keyboard, mouse)
+- [ ] USB Mass Storage (read/write USB drives)
+- Ref: USB 2.0 spec, OSDev "USB"
 
-### 2-10. POSIX 拡張 (~3,000 LOC)
+### 2-10. POSIX extensions (~3,000 LOC)
 - [ ] select / poll
 - [ ] dup / dup2
 - [ ] fcntl
-- [ ] 共有メモリ (shmget, shmat)
-- [ ] semaphore
-- [ ] プロセスグループ, セッション
+- [ ] Shared memory (shmget, shmat)
+- [ ] Semaphores
+- [ ] Process groups, sessions
 - [ ] TTY / PTY
 
-### 2-11. ユーザー空間ツール (~3,000 LOC)
-- [ ] libc サブセット (printf, scanf, malloc, string.h, stdlib.h)
-- [ ] シェル改善 (環境変数, `$PATH`, リダイレクト `>`, バックグラウンド `&`)
-- [ ] coreutils: echo, wc, head, tail, grep, sort, uniq
-- [ ] テキストエディタ (ed 相当)
+### 2-11. Userspace tools (~3,000 LOC)
+- [ ] libc subset (printf, scanf, malloc, string.h, stdlib.h)
+- [ ] Shell improvements (env vars, `$PATH`, redirection `>`, background `&`)
+- [ ] Coreutils: echo, wc, head, tail, grep, sort, uniq
+- [ ] Text editor (ed equivalent)
 
-**完了条件**: GUI ウィンドウでターミナルが動き、DNS 解決して HTTP GET できる
-
----
-
-## Milestone 3: MINIX 級 — ~100,000 LOC
-
-**目標**: POSIX サブセット互換。既存 C プログラムの一部がコンパイル・実行できる。
-
-- [ ] POSIX syscall 100+ 個 (open, read, write, close, fork, exec, wait, pipe, dup2, stat, lseek, mmap, munmap, ioctl, socket, bind, listen, accept, connect, send, recv, select, poll, kill, signal, sigaction, getpid, getppid, getcwd, chdir, mkdir, rmdir, unlink, link, rename, chmod, chown, ...)
-- [ ] mmap / demand paging / swap (ディスクスワップ)
-- [ ] ext3 ジャーナリング (ordered mode)
-- [ ] IPv6 デュアルスタック
-- [ ] AHCI (SATA) ドライバ
-- [ ] NVMe ドライバ
-- [ ] 動的リンカ (ld.so 相当, ELF shared object)
-- [ ] /proc ファイルシステム
-- [ ] /dev ファイルシステム (デバイスノード)
-- [ ] ネットワークソケット完全 (listen/accept/connect/shutdown)
-- [ ] プロセスグループ, セッション, ジョブ制御 (fg, bg, jobs)
-- [ ] newlib or musl libc 移植
-- [ ] Lua or MicroPython 移植 (言語ランタイム動作検証)
-
-**完了条件**: musl libc + busybox が動き、基本的な POSIX テストスイートが通る
+**Done when**: A GUI terminal window works, DNS resolves, and HTTP GET succeeds
 
 ---
 
-## Milestone 4: 実用 OS — ~500,000 LOC
+## Milestone 3: MINIX-grade — ~100,000 LOC
 
-**目標**: 実際にユーザーが使える OS。ブラウザ、ファイルマネージャ、パッケージマネージャ。
+**Goal**: Partial POSIX compatibility. Some existing C programs can be compiled and run natively.
 
-- [ ] ドライバ群: NIC 10+種 (realtek, intel, broadcom), GPU (VESA/bochs-vga/virtio-gpu), HDA audio, XHCI (USB 3.0), NVME, virtio (net/blk/console)
-- [ ] ファイルシステム群: FAT32, ext4, tmpfs, devfs, sysfs, procfs
-- [ ] ネットワーク完全: netfilter/iptables 相当, NAT, bonding, VLAN, WiFi (802.11)
-- [ ] セキュリティ: capabilities, seccomp, namespace (mount/PID/net)
-- [ ] GUI ツールキット (ウィジェット: button, textbox, list, menu, dialog)
-- [ ] ウィンドウマネージャ (タスクバー, ワークスペース, テーマ)
-- [ ] アプリ: ファイルマネージャ, テキストエディタ, ターミナル, 画像ビューア
-- [ ] パッケージマネージャ (ビルドシステム, 依存解決)
-- [ ] セルフホスト (OS 上で OS をビルド)
-- [ ] 完全 POSIX 互換テストスイート
+- [ ] 100+ POSIX syscalls (open, read, write, close, fork, exec, wait, pipe, dup2, stat, lseek, mmap, munmap, ioctl, socket, bind, listen, accept, connect, send, recv, select, poll, kill, signal, sigaction, getpid, getppid, getcwd, chdir, mkdir, rmdir, unlink, link, rename, chmod, chown, ...)
+- [ ] mmap / demand paging / disk swap
+- [ ] ext3 journaling (ordered mode)
+- [ ] IPv6 dual stack
+- [ ] AHCI (SATA) driver
+- [ ] NVMe driver
+- [ ] Dynamic linker (ld.so equivalent, ELF shared objects)
+- [ ] /proc filesystem
+- [ ] /dev filesystem (device nodes)
+- [ ] Full network sockets (listen/accept/connect/shutdown)
+- [ ] Process groups, sessions, job control (fg, bg, jobs)
+- [ ] Port newlib or musl libc
+- [ ] Port Lua or MicroPython (verify language runtime works)
 
-**完了条件**: セルフホスト可能、ウェブブラウザが動く
-
----
-
-## Milestone 5: Linux 級 — ~36,000,000 LOC
-
-**目標**: プロダクション運用。あらゆるハードウェアとワークロード。
-
-- [ ] アーキテクチャ: x86_64, ARM64, RISC-V, ...
-- [ ] デバイスドライバ: 数千種 (全カテゴリ)
-- [ ] コンテナ: cgroup v2, namespace 完全
-- [ ] 仮想化: KVM 相当 (VMX/SVM)
-- [ ] ファイルシステム: ext4, btrfs, xfs, nfs, ceph, ...
-- [ ] ネットワーク: 全プロトコル, XDP/eBPF
-- [ ] セキュリティ: SELinux, AppArmor, 暗号 API, 鍵管理
-- [ ] リアルタイム: PREEMPT_RT
-- [ ] 電源管理: ACPI 完全, suspend/hibernate
-- [ ] パフォーマンス: perf, ftrace, eBPF
+**Done when**: musl libc + busybox run, basic POSIX test suite passes
 
 ---
 
-## 参考リソース
+## Milestone 4: Production OS — ~500,000 LOC
 
-### 書籍
-- "Operating Systems: Three Easy Pieces" (OSTEP) — 無料オンライン
-- "Operating System Concepts" (Silberschatz) — 教科書定番
-- "Linux Kernel Development" (Robert Love) — Linux 内部
-- "Understanding the Linux Kernel" (Bovet & Cesati) — 詳細リファレンス
+**Goal**: An OS real users can use. Browser, file manager, package manager. Self-hosting.
 
-### ソースコード
-- [xv6](https://github.com/mit-pdos/xv6-public) — MIT 教育 OS (~10K LOC)
-- [SerenityOS](https://github.com/SerenityOS/serenity) — C++ 趣味 OS (~1M LOC)
-- [MINIX 3](https://github.com/Stichting-MINIX-Research-Foundation/minix) — マイクロカーネル
-- [Linux](https://github.com/torvalds/linux) — 目標
+- [ ] Driver ecosystem: 10+ NIC types (Realtek, Intel, Broadcom), GPU (VESA/bochs-vga/virtio-gpu), HDA audio, xHCI (USB 3.0), NVMe, virtio (net/blk/console)
+- [ ] Filesystem support: FAT32, ext4, tmpfs, devfs, sysfs, procfs
+- [ ] Full networking: netfilter/iptables equivalent, NAT, bonding, VLAN, WiFi (802.11)
+- [ ] Security: capabilities, seccomp, namespaces (mount/PID/net)
+- [ ] GUI toolkit (widgets: button, textbox, list, menu, dialog)
+- [ ] Window manager (taskbar, workspaces, themes)
+- [ ] Apps: file manager, text editor, terminal, image viewer
+- [ ] Package manager (build system, dependency resolution)
+- [ ] Self-hosting (build the OS on itself)
+- [ ] Full POSIX compliance test suite
+
+**Done when**: Self-hosting is possible and a web browser runs
+
+---
+
+## Milestone 5: Linux-grade — ~36,000,000 LOC
+
+**Goal**: Production-ready. Any hardware, any workload.
+
+- [ ] Architecture support: x86_64, ARM64, RISC-V, ...
+- [ ] Device drivers: thousands (all categories)
+- [ ] Containers: cgroup v2, full namespace support
+- [ ] Virtualization: KVM equivalent (VMX/SVM)
+- [ ] Filesystems: ext4, btrfs, xfs, nfs, ceph, ...
+- [ ] Networking: all protocols, XDP/eBPF
+- [ ] Security: SELinux, AppArmor, crypto API, key management
+- [ ] Real-time: PREEMPT_RT
+- [ ] Power management: full ACPI, suspend/hibernate
+- [ ] Performance: perf, ftrace, eBPF
+
+---
+
+## References
+
+### Books
+- "Operating Systems: Three Easy Pieces" (OSTEP) — free online
+- "Operating System Concepts" (Silberschatz) — classic textbook
+- "Linux Kernel Development" (Robert Love) — Linux internals
+- "Understanding the Linux Kernel" (Bovet & Cesati) — detailed reference
+
+### Source Code
+- [xv6](https://github.com/mit-pdos/xv6-public) — MIT teaching OS (~10K LOC)
+- [SerenityOS](https://github.com/SerenityOS/serenity) — C++ hobby OS (~1M LOC)
+- [MINIX 3](https://github.com/Stichting-MINIX-Research-Foundation/minix) — microkernel
+- [Linux](https://github.com/torvalds/linux) — the target
 
 ### OSDev
-- [OSDev Wiki](https://wiki.osdev.org/) — OS 開発の百科事典
+- [OSDev Wiki](https://wiki.osdev.org/) — OS development encyclopedia
 - [OSDev Forum](https://forum.osdev.org/) — Q&A
 
-### 仕様書
-- Intel SDM (Software Developer's Manual) — x86 アーキテクチャ
-- ACPI Specification — 電源管理
+### Specifications
+- Intel SDM (Software Developer's Manual) — x86 architecture
+- ACPI Specification — power management
 - USB 2.0/3.0 Specification — USB
-- ext2/ext4 disk layout — ファイルシステム
-- RFC 793 (TCP), 791 (IP), 768 (UDP) — ネットワーク
+- ext2/ext4 disk layout — filesystems
+- RFC 793 (TCP), 791 (IP), 768 (UDP) — networking
