@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const Color = enum(u4) {
     black = 0,
     blue = 1,

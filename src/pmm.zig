@@ -9,6 +9,7 @@ const BITMAP_SIZE = MAX_PAGES / 32;
 var bitmap: [BITMAP_SIZE]u32 = @splat(0xFFFFFFFF); // 全て使用中で初期化
 var total_pages: usize = 0;
 var used_pages: usize = 0;
+var max_page: usize = 0; // スキャン範囲の上限
 
 pub fn init(mem_upper_kb: usize) void {
     // mem_upper_kb: 1MB 以上の利用可能メモリ (KB)
@@ -17,8 +18,10 @@ pub fn init(mem_upper_kb: usize) void {
 
     // 1MB 以降のメモリを空きとしてマーク
     const start_page = 0x100000 / PAGE_SIZE; // 256 (= 1MB / 4KB)
+    max_page = start_page + total_pages;
+
     var i: usize = start_page;
-    while (i < start_page + total_pages) : (i += 1) {
+    while (i < max_page) : (i += 1) {
         clearBit(i);
         used_pages -= 1;
     }
@@ -33,7 +36,8 @@ pub fn init(mem_upper_kb: usize) void {
 }
 
 pub fn alloc() ?usize {
-    for (bitmap[0..BITMAP_SIZE], 0..) |entry, idx| {
+    const scan_words = if (max_page > 0) (max_page + 31) / 32 else BITMAP_SIZE;
+    for (bitmap[0..scan_words], 0..) |entry, idx| {
         if (entry != 0xFFFFFFFF) {
             // 空きビットを探す
             var bit: u5 = 0;

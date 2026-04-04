@@ -31,8 +31,10 @@ fn sysExit(status: u32) u32 {
 }
 
 fn sysWrite(_: u32, buf_ptr: u32, len: u32) u32 {
-    // 簡易的な安全チェック
     if (len > 4096) return 0;
+    if (buf_ptr == 0) return 0;
+    const end = @addWithOverflow(buf_ptr, len);
+    if (end[1] != 0) return 0; // オーバーフロー検出
     const buf: [*]const u8 = @ptrFromInt(buf_ptr);
     const slice = buf[0..len];
     vga.write(slice);

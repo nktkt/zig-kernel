@@ -20,22 +20,34 @@ var allocation_count: usize = 0;
 
 pub fn init() void {
     // PMM から初期ヒープ用に 4 ページ (16KB) 確保
-    if (pmm.alloc()) |addr| {
-        heap_start = addr;
-        // 連続 4 ページ確保
-        _ = pmm.alloc();
-        _ = pmm.alloc();
-        _ = pmm.alloc();
-        heap_end = addr + PAGE_SIZE * 4;
+    const page0 = pmm.alloc() orelse return;
+    const page1 = pmm.alloc() orelse return;
+    const page2 = pmm.alloc() orelse return;
+    const page3 = pmm.alloc() orelse return;
 
-        const header: *BlockHeader = @ptrFromInt(heap_start);
-        header.* = .{
-            .size = PAGE_SIZE * 4 - HEADER_SIZE,
-            .used = false,
-            .next = null,
-        };
-        free_list = header;
+    // 連続性を検証 (PMM はシーケンシャルだが保証はない)
+    if (page1 != page0 + PAGE_SIZE or
+        page2 != page0 + 2 * PAGE_SIZE or
+        page3 != page0 + 3 * PAGE_SIZE)
+    {
+        // 非連続の場合、余分を返却して 1 ページだけ使用
+        pmm.free(page1);
+        pmm.free(page2);
+        pmm.free(page3);
+        heap_start = page0;
+        heap_end = page0 + PAGE_SIZE;
+    } else {
+        heap_start = page0;
+        heap_end = page0 + PAGE_SIZE * 4;
     }
+
+    const header: *BlockHeader = @ptrFromInt(heap_start);
+    header.* = .{
+        .size = heap_end - heap_start - HEADER_SIZE,
+        .used = false,
+        .next = null,
+    };
+    free_list = header;
 }
 
 pub fn alloc(size: usize) ?[*]u8 {

@@ -111,6 +111,7 @@ export fn irq1Dispatch() void {
 }
 
 // INT 0x80: システムコール
+// ecx/edx はカーネル側で破壊されうるため、復元してから iret する
 fn syscallStub() callconv(.naked) void {
     asm volatile (
         \\push %%edx
@@ -118,7 +119,10 @@ fn syscallStub() callconv(.naked) void {
         \\push %%ebx
         \\push %%eax
         \\call syscallDispatch
-        \\add $16, %%esp
+        \\add $4, %%esp
+        \\pop %%ebx
+        \\pop %%ecx
+        \\pop %%edx
         \\iret
     );
 }

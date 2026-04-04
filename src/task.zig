@@ -68,7 +68,10 @@ pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
 
     // カーネルスタックとユーザースタックを確保
     const kstack = pmm.alloc() orelse return null;
-    const ustack = pmm.alloc() orelse return null;
+    const ustack = pmm.alloc() orelse {
+        pmm.free(kstack);
+        return null;
+    };
     const kstack_top = kstack + KERNEL_STACK_SIZE;
     const ustack_top = ustack + USER_STACK_SIZE;
 
@@ -115,49 +118,10 @@ pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
     return pid;
 }
 
-// スケジューラ: ラウンドロビン
-pub fn schedule() void {
-    if (!scheduling_enabled) return;
-
-    const prev = current_task;
-    var next = current_task;
-
-    // 次の ready タスクを探す
-    var i: u32 = 0;
-    while (i < MAX_TASKS) : (i += 1) {
-        next = (next + 1) % MAX_TASKS;
-        if (tasks[next].state == .ready) break;
-    }
-
-    if (next == prev) return; // 切り替え不要
-
-    if (tasks[prev].state == .running) {
-        tasks[prev].state = .ready;
-    }
-    tasks[next].state = .running;
-
-    const prev_idx = prev;
-    current_task = next;
-
-    // TSS のカーネルスタックを更新
-    tss.setKernelStack(tasks[next].kernel_stack + KERNEL_STACK_SIZE);
-
-    // コンテキストスイッチ
-    switchContext(&tasks[prev_idx].kernel_esp, tasks[next].kernel_esp);
-}
-
-fn switchContext(old_esp: *u32, new_esp: u32) void {
-    asm volatile (
-        \\mov %%esp, (%[old])
-        \\mov %[new], %%esp
-        \\popa
-        \\iret
-        :
-        : [old] "r" (old_esp),
-          [new] "r" (new_esp),
-        : .{ .memory = true }
-    );
-}
+// コンテキストスイッチは timerSchedule (IRQ0) 経由で行う。
+// voluntary な schedule/switchContext は不要。IRQ0 の pusha/popa/iret と
+// 整合するフレームを自前で構築するのは複雑でバグの温床になるため、
+// yield/exit では割り込みを再有効化して timer に委ねる。
 
 // IRQ0 (タイマー) から呼ばれる
 pub export fn timerSchedule(esp: u32) u32 {
@@ -194,13 +158,18 @@ pub fn exitCurrentTask() void {
     serial.writeHex(tasks[current_task].pid);
     serial.write("\n");
 
-    // 次のタスクに切り替え
-    scheduling_enabled = true;
-    schedule();
+    // 割り込みを再有効化し、タイマーに切り替えを委ねる
+    asm volatile ("sti");
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
 
 pub fn yield() void {
-    schedule();
+    // INT 0x80 は割り込みゲートなので IF=0 の状態で入る。
+    // sti で割り込みを再有効化し、hlt で次のタイマー割り込みを待つ。
+    // タイマー (IRQ0) が pusha/popa/iret で正しくコンテキストスイッチする。
+    asm volatile ("sti; hlt");
 }
 
 pub fn getCurrentPid() u32 {
