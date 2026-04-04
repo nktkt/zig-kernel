@@ -19,17 +19,17 @@ var first_table: [ENTRIES_PER_TABLE]u32 align(PAGE_SIZE) = undefined;
 pub fn init() void {
     // 最初の 4MB をアイデンティティマップ (仮想 = 物理)
     for (0..ENTRIES_PER_TABLE) |i| {
-        first_table[i] = @as(u32, @truncate(i * PAGE_SIZE)) | PAGE_PRESENT | PAGE_WRITABLE;
+        first_table[i] = @as(u32, @truncate(i * PAGE_SIZE)) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
     }
 
     // ページディレクトリにテーブルを登録
-    page_directory[0] = @intFromPtr(&first_table) | PAGE_PRESENT | PAGE_WRITABLE;
+    page_directory[0] = @intFromPtr(&first_table) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
 
     // 追加のアイデンティティマップ: 4MB-132MB (利用可能メモリ領域)
     // 4MB ページ (PSE) を使用
     var i: usize = 1;
     while (i < 33) : (i += 1) { // 33 * 4MB = 132MB
-        page_directory[i] = @as(u32, @truncate(i * 4 * 1024 * 1024)) | PAGE_PRESENT | PAGE_WRITABLE | (1 << 7); // PS bit
+        page_directory[i] = @as(u32, @truncate(i * 4 * 1024 * 1024)) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | (1 << 7); // PS bit
     }
 
     // CR3 にページディレクトリのアドレスを設定

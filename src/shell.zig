@@ -7,6 +7,7 @@ const heap = @import("heap.zig");
 const paging = @import("paging.zig");
 const rtc = @import("rtc.zig");
 const serial = @import("serial.zig");
+const task = @import("task.zig");
 const idt = @import("idt.zig");
 
 const MAX_INPUT = 256;
@@ -80,6 +81,10 @@ fn execute(input: []const u8) void {
         cmdUptime();
     } else if (eql(cmd, "ticks")) {
         cmdTicks();
+    } else if (eql(cmd, "ps")) {
+        cmdPs();
+    } else if (eql(cmd, "run")) {
+        cmdRun();
     } else if (eql(cmd, "date")) {
         cmdDate();
     } else if (eql(cmd, "paging")) {
@@ -113,6 +118,8 @@ fn cmdHelp() void {
     vga.write("  ticks   - Show raw tick count\n");
     vga.write("  date    - Show current date/time\n");
     vga.write("  paging  - Show paging status\n");
+    vga.write("  ps      - List tasks\n");
+    vga.write("  run     - Spawn user space tasks\n");
     vga.write("  reboot  - Reboot the system\n");
 }
 
@@ -191,6 +198,34 @@ fn cmdTicks() void {
     vga.write("Ticks: ");
     pmm.printNum(@truncate(pit.getTicks()));
     vga.putChar('\n');
+}
+
+fn cmdPs() void {
+    task.printTaskList();
+}
+
+fn cmdRun() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Spawning user tasks...\n");
+
+    if (task.createUserTask(@intFromPtr(&task.userProgramHello), "hello")) |pid| {
+        vga.setColor(.light_green, .black);
+        vga.write("Created task 'hello' (pid=");
+        pmm.printNum(pid);
+        vga.write(")\n");
+    }
+
+    if (task.createUserTask(@intFromPtr(&task.userProgramCounter), "counter")) |pid| {
+        vga.setColor(.light_green, .black);
+        vga.write("Created task 'counter' (pid=");
+        pmm.printNum(pid);
+        vga.write(")\n");
+    }
+
+    vga.setColor(.yellow, .black);
+    vga.write("Tasks scheduled. Use 'ps' to view.\n");
+    vga.setColor(.white, .black);
+    task.enableScheduling();
 }
 
 fn cmdDate() void {

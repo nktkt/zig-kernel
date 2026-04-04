@@ -7,6 +7,8 @@ const heap = @import("heap.zig");
 const paging = @import("paging.zig");
 const serial = @import("serial.zig");
 const rtc = @import("rtc.zig");
+const tss = @import("tss.zig");
+const task = @import("task.zig");
 const shell = @import("shell.zig");
 
 // Multiboot1 header
@@ -37,7 +39,7 @@ export fn _start() callconv(.naked) noreturn {
     );
 }
 
-fn initSubsystem(comptime name: []const u8, initFn: anytype) void {
+fn logInit(comptime name: []const u8, initFn: anytype) void {
     vga.setColor(.light_cyan, .black);
     vga.write(name);
     vga.setColor(.light_grey, .black);
@@ -51,18 +53,16 @@ fn initSubsystem(comptime name: []const u8, initFn: anytype) void {
 export fn kmain(mb_info_addr: u32) void {
     vga.init();
     serial.init();
-
-    serial.write("\n=== Zig Kernel v0.4 boot ===\n");
+    serial.write("\n=== Zig Kernel v0.5 boot ===\n");
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v0.4\n");
+    vga.write("  Zig Kernel v0.5\n");
     vga.write("=================================\n\n");
 
-    initSubsystem("[GDT] ", gdt.init);
-    initSubsystem("[IDT] ", idt.init);
+    logInit("[GDT] ", gdt.init);
+    logInit("[IDT] ", idt.init);
 
-    // PMM (Multiboot 情報が必要)
     vga.setColor(.light_cyan, .black);
     vga.write("[PMM]  ");
     vga.setColor(.light_grey, .black);
@@ -75,11 +75,22 @@ export fn kmain(mb_info_addr: u32) void {
     }
     vga.setColor(.light_green, .black);
     vga.write("OK\n");
-    serial.write("[PMM]  OK\n");
 
-    initSubsystem("[PIT] ", pit.init);
-    initSubsystem("[HEAP]", heap.init);
-    initSubsystem("[PAGE]", paging.init);
+    logInit("[PIT] ", pit.init);
+    logInit("[HEAP]", heap.init);
+    logInit("[PAGE]", paging.init);
+
+    // TSS 初期化 (カーネルスタックトップを渡す)
+    vga.setColor(.light_cyan, .black);
+    vga.write("[TSS]  ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Initializing... ");
+    const kstack_top = asm volatile ("" : [esp] "={esp}" (-> u32));
+    tss.init(kstack_top);
+    vga.setColor(.light_green, .black);
+    vga.write("OK\n");
+
+    logInit("[TASK]", task.init);
 
     vga.setColor(.light_cyan, .black);
     vga.write("[MEM]  ");
@@ -92,7 +103,7 @@ export fn kmain(mb_info_addr: u32) void {
 
     vga.write("\n");
     vga.setColor(.yellow, .black);
-    vga.write("Type 'help' for available commands.\n\n");
+    vga.write("Type 'help' for commands. 'run' to start user tasks.\n\n");
     vga.setColor(.white, .black);
 
     shell.init();
