@@ -161,6 +161,167 @@ fn readFatEntry(cluster: u16) ?u16 {
     return readU16At(&sector_buf, offset);
 }
 
+// ---- 書き込みサポート ----
+
+pub fn writeFile(name: []const u8, data: []const u8) bool {
+    if (!initialized) return false;
+
+    var fname83: [11]u8 = [_]u8{' '} ** 11;
+    toFat83(name, &fname83);
+
+    // ルートディレクトリでエントリを探す (既存 or 空きスロット)
+    const root_sectors = (@as(u32, root_entry_count) * 32 + 511) / 512;
+    var found_sector: u32 = 0;
+    var found_offset: usize = 0;
+    var found = false;
+    var empty_sector: u32 = 0;
+    var empty_offset: usize = 0;
+    var has_empty = false;
+
+    var s: u32 = 0;
+    while (s < root_sectors) : (s += 1) {
+        if (!ata.readSectors(root_dir_sector + s, 1, &sector_buf)) return false;
+        var e: usize = 0;
+        while (e < 512) : (e += 32) {
+            if (sector_buf[e] == 0 or sector_buf[e] == 0xE5) {
+                if (!has_empty) {
+                    empty_sector = s;
+                    empty_offset = e;
+                    has_empty = true;
+                }
+                if (sector_buf[e] == 0) break;
+                continue;
+            }
+            if (matchName(sector_buf[e .. e + 11], &fname83)) {
+                // 既存: 古いクラスタを解放
+                const old_cluster = readU16At(&sector_buf, e + 26);
+                freeClusterChain(old_cluster);
+                found_sector = s;
+                found_offset = e;
+                found = true;
+            }
+        }
+        if (found) break;
+    }
+
+    // 新しいクラスタにデータを書き込み
+    const cluster = allocCluster() orelse return false;
+    const sector = data_start_sector + @as(u32, cluster - 2) * sectors_per_cluster;
+    @memset(&sector_buf, 0);
+    const write_len = @min(data.len, 512);
+    @memcpy(sector_buf[0..write_len], data[0..write_len]);
+    if (!ata.writeSectors(sector, 1, &sector_buf)) return false;
+
+    // FAT エントリ更新 (EOF マーク)
+    writeFatEntry(cluster, 0xFFFF);
+
+    // ディレクトリエントリ更新
+    const dir_s = if (found) found_sector else empty_sector;
+    const dir_e = if (found) found_offset else empty_offset;
+    if (!found and !has_empty) return false;
+
+    if (!ata.readSectors(root_dir_sector + dir_s, 1, &sector_buf)) return false;
+    @memcpy(sector_buf[dir_e .. dir_e + 11], &fname83);
+    sector_buf[dir_e + 11] = 0x20; // Archive
+    // 時間/日付 (固定値)
+    writeU16At(&sector_buf, dir_e + 22, 0);
+    writeU16At(&sector_buf, dir_e + 24, 0x5921); // 2024-09-01
+    writeU16At(&sector_buf, dir_e + 26, cluster);
+    writeU32At(&sector_buf, dir_e + 28, @truncate(data.len));
+    return ata.writeSectors(root_dir_sector + dir_s, 1, &sector_buf);
+}
+
+pub fn deleteFile(name: []const u8) bool {
+    if (!initialized) return false;
+
+    var fname83: [11]u8 = [_]u8{' '} ** 11;
+    toFat83(name, &fname83);
+
+    const root_sectors = (@as(u32, root_entry_count) * 32 + 511) / 512;
+    var s: u32 = 0;
+    while (s < root_sectors) : (s += 1) {
+        if (!ata.readSectors(root_dir_sector + s, 1, &sector_buf)) return false;
+        var e: usize = 0;
+        while (e < 512) : (e += 32) {
+            if (sector_buf[e] == 0) return false;
+            if (sector_buf[e] == 0xE5) continue;
+            if (matchName(sector_buf[e .. e + 11], &fname83)) {
+                const cluster = readU16At(&sector_buf, e + 26);
+                freeClusterChain(cluster);
+                sector_buf[e] = 0xE5; // 削除マーク
+                return ata.writeSectors(root_dir_sector + s, 1, &sector_buf);
+            }
+        }
+    }
+    return false;
+}
+
+fn toFat83(name: []const u8, out: *[11]u8) void {
+    var di: usize = 0;
+    var ext = false;
+    for (name) |c| {
+        if (c == '.') {
+            ext = true;
+            di = 8;
+            continue;
+        }
+        const upper = if (c >= 'a' and c <= 'z') c - 32 else c;
+        if (!ext and di < 8) {
+            out[di] = upper;
+            di += 1;
+        } else if (ext and di < 11) {
+            out[di] = upper;
+            di += 1;
+        }
+    }
+}
+
+fn allocCluster() ?u16 {
+    // FAT テーブルを走査して空きクラスタを探す
+    const total_clusters: u16 = @truncate((@as(u32, fat_size) * 512) / 2);
+    var c: u16 = 2;
+    while (c < total_clusters) : (c += 1) {
+        if ((readFatEntry(c) orelse continue) == 0) return c;
+    }
+    return null;
+}
+
+fn freeClusterChain(start: u16) void {
+    var cluster = start;
+    while (cluster >= 2 and cluster < 0xFFF8) {
+        const next = readFatEntry(cluster) orelse break;
+        writeFatEntry(cluster, 0);
+        cluster = next;
+    }
+}
+
+fn writeFatEntry(cluster: u16, value: u16) void {
+    const fat_offset = @as(u32, cluster) * 2;
+    const fat_sect = reserved_sectors + fat_offset / 512;
+    const offset: usize = @truncate(fat_offset % 512);
+
+    if (!ata.readSectors(fat_sect, 1, &sector_buf)) return;
+    writeU16At(&sector_buf, offset, value);
+    _ = ata.writeSectors(fat_sect, 1, &sector_buf);
+
+    // 2nd FAT コピー更新
+    if (num_fats > 1) {
+        _ = ata.writeSectors(fat_sect + fat_size, 1, &sector_buf);
+    }
+}
+
+fn writeU16At(buf: []u8, offset: usize, val: u16) void {
+    buf[offset] = @truncate(val);
+    buf[offset + 1] = @truncate(val >> 8);
+}
+
+fn writeU32At(buf: []u8, offset: usize, val: u32) void {
+    buf[offset] = @truncate(val);
+    buf[offset + 1] = @truncate(val >> 8);
+    buf[offset + 2] = @truncate(val >> 16);
+    buf[offset + 3] = @truncate(val >> 24);
+}
+
 fn matchName(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |ca, cb| {

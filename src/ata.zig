@@ -14,6 +14,8 @@ const ATA_CMD: u16 = 0x1F7;
 const ATA_STATUS: u16 = 0x1F7;
 
 const CMD_READ: u8 = 0x20;
+const CMD_WRITE: u8 = 0x30;
+const CMD_FLUSH: u8 = 0xE7;
 const STATUS_BSY: u8 = 0x80;
 const STATUS_DRQ: u8 = 0x08;
 const STATUS_ERR: u8 = 0x01;
@@ -64,6 +66,43 @@ pub fn readSectors(lba: u32, count: u8, buf: [*]u8) bool {
         }
     }
     return true;
+}
+
+pub fn writeSectors(lba: u32, count: u8, buf: [*]const u8) bool {
+    if (!present or count == 0) return false;
+
+    idt.outb(ATA_DEVICE, 0xE0 | @as(u8, @truncate((lba >> 24) & 0x0F)));
+    idt.outb(ATA_SECT_CNT, count);
+    idt.outb(ATA_LBA_LO, @truncate(lba));
+    idt.outb(ATA_LBA_MID, @truncate(lba >> 8));
+    idt.outb(ATA_LBA_HI, @truncate(lba >> 16));
+    idt.outb(ATA_CMD, CMD_WRITE);
+
+    var sect: u32 = 0;
+    while (sect < count) : (sect += 1) {
+        if (!waitReady()) return false;
+
+        const offset = sect * 512;
+        var i: u32 = 0;
+        while (i < 256) : (i += 1) {
+            const lo: u16 = buf[offset + i * 2];
+            const hi: u16 = buf[offset + i * 2 + 1];
+            idt.outw(ATA_DATA, lo | (hi << 8));
+        }
+    }
+    // キャッシュフラッシュ
+    idt.outb(ATA_CMD, CMD_FLUSH);
+    _ = waitBsy();
+    return true;
+}
+
+fn waitBsy() bool {
+    var timeout: u32 = 0;
+    while (timeout < 100000) : (timeout += 1) {
+        const st = idt.inb(ATA_STATUS);
+        if (st & STATUS_BSY == 0) return true;
+    }
+    return false;
 }
 
 fn waitReady() bool {

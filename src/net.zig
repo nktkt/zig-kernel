@@ -5,6 +5,8 @@ const pit = @import("pit.zig");
 const vga = @import("vga.zig");
 const pmm = @import("pmm.zig");
 const serial = @import("serial.zig");
+const tcp = @import("tcp.zig");
+const udp = @import("udp.zig");
 
 // 静的ネットワーク設定 (QEMU user-mode networking)
 pub const OUR_IP = ipAddr(10, 0, 2, 16);
@@ -51,6 +53,20 @@ fn pollOnce() void {
     }
 }
 
+// ---- 公開 API (TCP/UDP モジュール用) ----
+
+pub fn handleIncoming(data: []const u8) void {
+    handlePacket(data);
+}
+
+pub fn arpLookupPub(ip: u32) ?[6]u8 {
+    return arpLookup(ip);
+}
+
+pub fn calcChecksumPub(data: []const u8) u16 {
+    return calcChecksum(data);
+}
+
 fn handlePacket(data: []const u8) void {
     const ethertype = getU16BE(data[12..14]);
     const payload = data[14..];
@@ -82,10 +98,13 @@ fn handleIp(data: []const u8) void {
     const ihl = (data[0] & 0x0F) * 4;
     if (data.len < ihl) return;
     const proto = data[9];
+    const src_ip = getU32BE(data[12..16]);
     const payload = data[ihl..];
 
     switch (proto) {
         PROTO_ICMP => handleIcmp(payload),
+        6 => tcp.handleTcpPacket(src_ip, payload), // TCP
+        PROTO_UDP => udp.handleUdpPacket(src_ip, payload),
         else => {},
     }
 }
@@ -338,23 +357,23 @@ fn printHex8(val: u8) void {
     vga.putChar(hex[val & 0xF]);
 }
 
-fn putU16BE(buf: *[2]u8, val: u16) void {
+pub fn putU16BE(buf: *[2]u8, val: u16) void {
     buf[0] = @truncate(val >> 8);
     buf[1] = @truncate(val);
 }
 
-fn putU32BE(buf: *[4]u8, val: u32) void {
+pub fn putU32BE(buf: *[4]u8, val: u32) void {
     buf[0] = @truncate(val >> 24);
     buf[1] = @truncate(val >> 16);
     buf[2] = @truncate(val >> 8);
     buf[3] = @truncate(val);
 }
 
-fn getU16BE(buf: []const u8) u16 {
+pub fn getU16BE(buf: []const u8) u16 {
     return @as(u16, buf[0]) << 8 | buf[1];
 }
 
-fn getU32BE(buf: []const u8) u32 {
+pub fn getU32BE(buf: []const u8) u32 {
     return @as(u32, buf[0]) << 24 | @as(u32, buf[1]) << 16 | @as(u32, buf[2]) << 8 | buf[3];
 }
 

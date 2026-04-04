@@ -182,6 +182,14 @@ pub fn inw(port: u16) u16 {
     );
 }
 
+pub fn outw(port: u16, val: u16) void {
+    asm volatile ("outw %[val], %[port]"
+        :
+        : [val] "{ax}" (val),
+          [port] "{dx}" (port),
+    );
+}
+
 pub fn outb(port: u16, val: u8) void {
     asm volatile ("outb %[val], %[port]"
         :

@@ -15,6 +15,11 @@ const ata = @import("ata.zig");
 const fat16 = @import("fat16.zig");
 const e1000 = @import("e1000.zig");
 const net = @import("net.zig");
+const vfs = @import("vfs.zig");
+const elf = @import("elf.zig");
+const user = @import("user.zig");
+const tcp = @import("tcp.zig");
+const pipe = @import("pipe.zig");
 
 const MAX_INPUT = 256;
 var input_buf: [MAX_INPUT]u8 = undefined;
@@ -56,10 +61,18 @@ pub fn handleKey(char: u8) void {
 }
 
 fn printPrompt() void {
+    vga.setColor(.light_green, .black);
+    vga.write(user.getCurrentName());
+    vga.setColor(.light_grey, .black);
+    vga.putChar('@');
     vga.setColor(.light_cyan, .black);
     vga.write("zig-os");
     vga.setColor(.light_grey, .black);
-    vga.write("> ");
+    if (user.isRoot()) {
+        vga.write("# ");
+    } else {
+        vga.write("$ ");
+    }
     vga.setColor(.white, .black);
 }
 
@@ -124,6 +137,26 @@ fn execute(input: []const u8) void {
         cmdNet();
     } else if (eql(cmd, "ping")) {
         cmdPing(args);
+    } else if (eql(cmd, "exec")) {
+        cmdExec(args);
+    } else if (eql(cmd, "whoami")) {
+        cmdWhoami();
+    } else if (eql(cmd, "users")) {
+        cmdUsers();
+    } else if (eql(cmd, "su")) {
+        cmdSu(args);
+    } else if (eql(cmd, "touch")) {
+        cmdTouch(args);
+    } else if (eql(cmd, "cp")) {
+        cmdCp(args);
+    } else if (eql(cmd, "dwrite")) {
+        cmdDwrite(args);
+    } else if (eql(cmd, "stat")) {
+        cmdStat(args);
+    } else if (eql(cmd, "pipe")) {
+        cmdPipe();
+    } else if (eql(cmd, "tcp")) {
+        cmdTcp(args);
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -163,6 +196,16 @@ fn cmdHelp() void {
     vga.write("  disk    - Disk (ATA) info\n");
     vga.write("  net     - Network status\n");
     vga.write("  ping <ip> - Send ICMP ping\n");
+    vga.write("  exec <f>  - Load & run ELF/program\n");
+    vga.write("  whoami  - Current user\n");
+    vga.write("  users   - List users\n");
+    vga.write("  su <user> - Switch user\n");
+    vga.write("  touch <f> - Create empty file\n");
+    vga.write("  cp <s> <d> - Copy file\n");
+    vga.write("  dwrite <f> <txt> - Write to disk\n");
+    vga.write("  stat <f> - File info\n");
+    vga.write("  pipe    - Pipe demo\n");
+    vga.write("  tcp <ip:port> - TCP connect\n");
     vga.write("  reboot  - Reboot system\n");
 }
 
@@ -419,6 +462,253 @@ fn cmdPing(args: []const u8) void {
         return;
     };
     net.ping(ip);
+}
+
+// ---- Phase 2 コマンド ----
+
+fn cmdExec(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: exec <filename>\n");
+        return;
+    }
+    _ = elf.exec(args);
+}
+
+fn cmdWhoami() void {
+    vga.setColor(.light_green, .black);
+    vga.write(user.getCurrentName());
+    vga.putChar('\n');
+}
+
+fn cmdUsers() void {
+    user.printUsers();
+}
+
+fn cmdSu(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: su <username>\n");
+        return;
+    }
+    // パスワード入力は省略 (簡易実装)
+    if (user.switchUser(args, args)) {
+        vga.setColor(.light_green, .black);
+        vga.write("Switched to ");
+        vga.write(args);
+        vga.putChar('\n');
+    } else {
+        // パスワードなし (root) でも試行
+        if (user.switchUser(args, "")) {
+            vga.setColor(.light_green, .black);
+            vga.write("Switched to ");
+            vga.write(args);
+            vga.putChar('\n');
+        } else {
+            vga.setColor(.light_red, .black);
+            vga.write("Authentication failed\n");
+        }
+    }
+}
+
+fn cmdTouch(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: touch <filename>\n");
+        return;
+    }
+    if (ramfs.findByName(args) != null) {
+        vga.write("File already exists\n");
+        return;
+    }
+    if (ramfs.create(args) != null) {
+        vga.setColor(.light_green, .black);
+        vga.write("Created: ");
+        vga.write(args);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Failed to create file\n");
+    }
+}
+
+fn cmdCp(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: cp <src> <dst>\n");
+        return;
+    }
+    var sp: usize = args.len;
+    for (args, 0..) |c, i| {
+        if (c == ' ') { sp = i; break; }
+    }
+    if (sp >= args.len) {
+        vga.write("Usage: cp <src> <dst>\n");
+        return;
+    }
+    const src = args[0..sp];
+    const dst = trim(args[sp + 1 ..]);
+
+    const src_idx = ramfs.findByName(src) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Source not found\n");
+        return;
+    };
+    const file = ramfs.getFile(src_idx) orelse return;
+    const dst_idx = ramfs.findByName(dst) orelse ramfs.create(dst) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Cannot create destination\n");
+        return;
+    };
+    _ = ramfs.writeFile(dst_idx, file.data[0..file.size]);
+    vga.setColor(.light_green, .black);
+    vga.write("Copied ");
+    vga.write(src);
+    vga.write(" -> ");
+    vga.write(dst);
+    vga.putChar('\n');
+}
+
+fn cmdDwrite(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: dwrite <filename> <text>\n");
+        return;
+    }
+    if (!ata.isPresent() or !fat16.isInitialized()) {
+        vga.setColor(.light_red, .black);
+        vga.write("No disk available\n");
+        return;
+    }
+    var sp: usize = args.len;
+    for (args, 0..) |c, i| {
+        if (c == ' ') { sp = i; break; }
+    }
+    if (sp >= args.len) {
+        vga.write("Usage: dwrite <filename> <text>\n");
+        return;
+    }
+    const fname = args[0..sp];
+    const text = trim(args[sp + 1 ..]);
+    if (fat16.writeFile(fname, text)) {
+        vga.setColor(.light_green, .black);
+        vga.write("Written to disk: ");
+        vga.write(fname);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Disk write failed\n");
+    }
+}
+
+fn cmdStat(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: stat <filename>\n");
+        return;
+    }
+    if (vfs.stat(args)) |s| {
+        vga.setColor(.light_grey, .black);
+        vga.write("  File: ");
+        vga.write(args);
+        vga.write("\n  Size: ");
+        pmm.printNum(s.size);
+        vga.write(" bytes\n  Type: ");
+        switch (s.kind) {
+            .file => vga.write("regular file"),
+            .directory => vga.write("directory"),
+            .pipe => vga.write("pipe"),
+            .socket => vga.write("socket"),
+        }
+        vga.write("\n  Perm: 0");
+        pmm.printNum(s.permissions >> 6 & 7);
+        pmm.printNum(s.permissions >> 3 & 7);
+        pmm.printNum(s.permissions & 7);
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Not found: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+fn cmdPipe() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Pipe demo: writing and reading...\n");
+    if (vfs.openPipe()) |fds| {
+        const msg = "Hello through pipe!";
+        _ = vfs.write(fds[1], msg);
+        var buf: [64]u8 = undefined;
+        if (vfs.read(fds[0], &buf)) |n| {
+            vga.setColor(.light_green, .black);
+            vga.write("  Received: ");
+            vga.write(buf[0..n]);
+            vga.putChar('\n');
+        }
+        vfs.close(fds[0]);
+        vfs.close(fds[1]);
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Failed to create pipe\n");
+    }
+}
+
+fn cmdTcp(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: tcp <ip:port>\n");
+        return;
+    }
+    if (!e1000.isInitialized()) {
+        vga.setColor(.light_red, .black);
+        vga.write("No network interface\n");
+        return;
+    }
+    // ip:port を分割
+    var colon: usize = args.len;
+    for (args, 0..) |c, i| {
+        if (c == ':') { colon = i; break; }
+    }
+    if (colon >= args.len) {
+        vga.write("Usage: tcp <ip:port>\n");
+        return;
+    }
+    const ip = net.parseIp(args[0..colon]) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid IP\n");
+        return;
+    };
+    const port = parseU16(args[colon + 1 ..]) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid port\n");
+        return;
+    };
+    vga.setColor(.light_grey, .black);
+    vga.write("Connecting to ");
+    vga.write(args);
+    vga.write("...\n");
+    if (tcp.connect(ip, port, 12345)) |conn| {
+        vga.setColor(.light_green, .black);
+        vga.write("Connected! Sending data...\n");
+        _ = tcp.send(conn, "GET / HTTP/1.0\r\nHost: test\r\n\r\n");
+
+        var buf: [256]u8 = undefined;
+        const n = tcp.recv(conn, &buf);
+        if (n > 0) {
+            vga.setColor(.light_cyan, .black);
+            vga.write(buf[0..n]);
+            vga.putChar('\n');
+        }
+        tcp.close(conn);
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Connection failed\n");
+    }
+}
+
+fn parseU16(s: []const u8) ?u16 {
+    var val: u32 = 0;
+    for (s) |c| {
+        if (c < '0' or c > '9') return null;
+        val = val * 10 + (c - '0');
+        if (val > 65535) return null;
+    }
+    if (s.len == 0) return null;
+    return @truncate(val);
 }
 
 // ---- ユーティリティ ----
