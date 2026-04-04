@@ -2,6 +2,7 @@
 
 const vga = @import("vga.zig");
 const keyboard = @import("keyboard.zig");
+const pit = @import("pit.zig");
 
 const IdtEntry = packed struct {
     base_low: u16,
@@ -43,13 +44,14 @@ fn picRemap() void {
     outb(0xA1, 0x02);
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
-    outb(0x21, 0xFD);
+    outb(0x21, 0xFC); // IRQ0 (タイマー) + IRQ1 (キーボード) を有効化
     outb(0xA1, 0xFF);
 }
 
 pub fn init() void {
     picRemap();
-    setGate(33, @intFromPtr(&irq1Stub));
+    setGate(32, @intFromPtr(&irq0Stub)); // IRQ0: タイマー
+    setGate(33, @intFromPtr(&irq1Stub)); // IRQ1: キーボード
 
     idt_ptr = .{
         .limit = @as(u16, @sizeOf(@TypeOf(idt_entries))) - 1,
@@ -63,7 +65,22 @@ pub fn init() void {
     asm volatile ("sti");
 }
 
-// naked stub: レジスタ保存 → C関数呼び出し → レジスタ復帰 → iret
+// IRQ0: タイマー割り込み
+fn irq0Stub() callconv(.naked) void {
+    asm volatile (
+        \\pusha
+        \\call irq0Dispatch
+        \\popa
+        \\iret
+    );
+}
+
+export fn irq0Dispatch() void {
+    pit.tick();
+    outb(0x20, 0x20);
+}
+
+// IRQ1: キーボード割り込み
 fn irq1Stub() callconv(.naked) void {
     asm volatile (
         \\pusha

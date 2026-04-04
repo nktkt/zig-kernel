@@ -2,6 +2,8 @@ const vga = @import("vga.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
+const pit = @import("pit.zig");
+const heap = @import("heap.zig");
 const shell = @import("shell.zig");
 
 // Multiboot1 header
@@ -38,7 +40,7 @@ export fn kmain(mb_info_addr: u32) void {
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v0.2\n");
+    vga.write("  Zig Kernel v0.3\n");
     vga.write("=================================\n\n");
 
     vga.setColor(.light_cyan, .black);
@@ -67,6 +69,22 @@ export fn kmain(mb_info_addr: u32) void {
             pmm.init(mb_info.mem_upper);
         }
     }
+    vga.setColor(.light_green, .black);
+    vga.write("OK\n");
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("[PIT] ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Initializing... ");
+    pit.init();
+    vga.setColor(.light_green, .black);
+    vga.write("OK\n");
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("[HEAP]");
+    vga.setColor(.light_grey, .black);
+    vga.write(" Initializing... ");
+    heap.init();
     vga.setColor(.light_green, .black);
     vga.write("OK\n");
 
