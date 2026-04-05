@@ -39,6 +39,17 @@ const config = @import("config.zig");
 const slab = @import("slab.zig");
 const mmu = @import("mmu.zig");
 const crypto = @import("crypto.zig");
+const syscall_table = @import("syscall_table.zig");
+const mount_mod = @import("mount.zig");
+const pci_db = @import("pci_db.zig");
+const time_mod = @import("time.zig");
+const capability = @import("capability.zig");
+const canvas = @import("canvas.zig");
+const window = @import("window.zig");
+const theme_mod = @import("theme.zig");
+const bench_mod = @import("bench.zig");
+const base64 = @import("base64.zig");
+const sort = @import("sort.zig");
 const uhci = @import("uhci.zig");
 const blkdev = @import("blkdev.zig");
 const cmos = @import("cmos.zig");
@@ -335,6 +346,28 @@ fn execute(input: []const u8) void {
         mmu.printMemoryMap();
     } else if (eql(cmd, "crc32")) {
         cmdCrc32(args);
+    } else if (eql(cmd, "syscalls")) {
+        syscall_table.printTable();
+    } else if (eql(cmd, "mounts")) {
+        mount_mod.printMounts();
+    } else if (eql(cmd, "pcidb")) {
+        cmdPcidb();
+    } else if (eql(cmd, "time")) {
+        cmdTime();
+    } else if (eql(cmd, "caps")) {
+        cmdCaps();
+    } else if (eql(cmd, "canvas")) {
+        cmdCanvas();
+    } else if (eql(cmd, "windows")) {
+        cmdWindows();
+    } else if (eql(cmd, "themes")) {
+        theme_mod.listThemes();
+    } else if (eql(cmd, "bench")) {
+        bench_mod.runAll();
+    } else if (eql(cmd, "b64")) {
+        cmdBase64(args);
+    } else if (eql(cmd, "sort")) {
+        cmdSort();
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -410,6 +443,28 @@ fn cmdHelp() void {
     vga.write("  version - Kernel version\n");
     vga.write("  log <l> - Set log level\n");
     vga.write("  benchmark - Memory benchmark\n");
+    vga.write("  syscalls - System call table\n");
+    vga.write("  mounts  - Mounted filesystems\n");
+    vga.write("  pcidb   - PCI devices (named)\n");
+    vga.write("  time    - Current time\n");
+    vga.write("  caps    - Process capabilities\n");
+    vga.write("  canvas  - 2D graphics demo\n");
+    vga.write("  windows - Window manager demo\n");
+    vga.write("  themes  - List GUI themes\n");
+    vga.write("  bench   - Run benchmarks\n");
+    vga.write("  b64 <t> - Base64 encode\n");
+    vga.write("  sort    - Sorting demo\n");
+    vga.write("  devs    - Device nodes (/dev)\n");
+    vga.write("  proc <f> - Read /proc file\n");
+    vga.write("  tty     - TTY status\n");
+    vga.write("  test    - Run kernel tests\n");
+    vga.write("  script <f> - Run shell script\n");
+    vga.write("  edit <f> - Text editor\n");
+    vga.write("  guess   - Guessing game\n");
+    vga.write("  config  - Configuration\n");
+    vga.write("  slab    - Slab allocator\n");
+    vga.write("  mmap    - Memory map\n");
+    vga.write("  crc32 <f> - File checksum\n");
 }
 
 fn cmdClear() void {
@@ -1234,6 +1289,88 @@ fn cmdEdit(args: []const u8) void {
         return;
     }
     editor.start(args);
+}
+
+fn cmdPcidb() void {
+    // PCI デバイスを名前付きで表示
+    vga.setColor(.yellow, .black);
+    vga.write("PCI Devices (with names):\n");
+    vga.setColor(.light_grey, .black);
+    const count = pci.getDeviceCount();
+    pmm.printNum(count);
+    vga.write(" device(s) found.\n");
+    pci.printDevices();
+}
+
+fn cmdTime() void {
+    const dt = time_mod.now();
+    var buf: [19]u8 = undefined;
+    time_mod.formatDate(dt, &buf);
+    vga.setColor(.light_grey, .black);
+    vga.write(&buf);
+    vga.putChar('\n');
+    vga.write("Timestamp: ");
+    pmm.printNum(time_mod.toTimestamp(dt));
+    vga.putChar('\n');
+}
+
+fn cmdCaps() void {
+    const pid = task.getCurrentPid();
+    vga.setColor(.light_grey, .black);
+    vga.write("Capabilities for PID ");
+    pmm.printNum(pid);
+    vga.write(":\n");
+    capability.printCapabilities(pid);
+}
+
+fn cmdCanvas() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Entering graphics mode for canvas demo...\n");
+    framebuf.enterMode13h();
+    canvas.demo();
+    asm volatile ("sti; hlt");
+    framebuf.exitMode13h();
+    vga.init();
+    vga.setColor(.light_green, .black);
+    vga.write("Returned to text mode.\n");
+}
+
+fn cmdWindows() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Entering graphics mode for window demo...\n");
+    framebuf.enterMode13h();
+    window.demo();
+    asm volatile ("sti; hlt");
+    framebuf.exitMode13h();
+    vga.init();
+    vga.setColor(.light_green, .black);
+    vga.write("Returned to text mode.\n");
+}
+
+fn cmdBase64(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: b64 <text>\n");
+        return;
+    }
+    var out: [512]u8 = undefined;
+    const len = base64.encode(args, &out);
+    vga.setColor(.light_grey, .black);
+    vga.write("Base64: ");
+    vga.write(out[0..len]);
+    vga.putChar('\n');
+}
+
+fn cmdSort() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Sorting demo: [9,3,7,1,5,8,2,6,4,0]\n");
+    var data = [_]u32{ 9, 3, 7, 1, 5, 8, 2, 6, 4, 0 };
+    sort.quickSort(&data);
+    vga.write("Sorted:       [");
+    for (data, 0..) |v, i| {
+        if (i > 0) vga.putChar(',');
+        pmm.printNum(v);
+    }
+    vga.write("]\n");
 }
 
 fn cmdCrc32(args: []const u8) void {

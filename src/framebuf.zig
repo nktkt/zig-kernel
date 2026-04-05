@@ -44,7 +44,29 @@ pub fn putPixel(x: u32, y: u32, color: u32) void {
     } else if (fb_bpp == 16) {
         const ptr: *volatile u16 = @ptrFromInt(fb_addr + offset);
         ptr.* = @truncate(color);
+    } else if (fb_bpp == 8) {
+        const ptr: *volatile u8 = @ptrFromInt(fb_addr + offset);
+        ptr.* = @truncate(color);
     }
+}
+
+pub fn getPixel(x: u32, y: u32) u32 {
+    if (!available or x >= fb_width or y >= fb_height) return 0;
+    const offset = y * fb_pitch + x * (fb_bpp / 8);
+    if (fb_bpp == 32) {
+        const ptr: *volatile u32 = @ptrFromInt(fb_addr + offset);
+        return ptr.*;
+    } else if (fb_bpp == 24) {
+        const base: [*]volatile u8 = @ptrFromInt(fb_addr + offset);
+        return @as(u32, base[0]) | (@as(u32, base[1]) << 8) | (@as(u32, base[2]) << 16);
+    } else if (fb_bpp == 16) {
+        const ptr: *volatile u16 = @ptrFromInt(fb_addr + offset);
+        return ptr.*;
+    } else if (fb_bpp == 8) {
+        const ptr: *volatile u8 = @ptrFromInt(fb_addr + offset);
+        return ptr.*;
+    }
+    return 0;
 }
 
 pub fn drawRect(x: u32, y: u32, w: u32, h: u32, color: u32) void {
