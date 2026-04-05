@@ -68,6 +68,16 @@ var total_blocks: u32 = 0;
 var free_blocks: u32 = 0;
 var free_inodes: u32 = 0;
 
+// ブロックグループディスクリプタ (BGD) — グループ0
+var bgd_block_bitmap: u32 = 0;
+var bgd_inode_bitmap: u32 = 0;
+var bgd_inode_table: u32 = 0;
+
+// エイリアス
+var s_blocks_per_group: u32 = 0;
+var s_inodes_per_group: u32 = 0;
+var s_first_data_block: u32 = 0;
+
 // セクタバッファ
 var sector_buf: [4096]u8 align(4) = undefined;
 
@@ -105,6 +115,21 @@ pub fn init() void {
         inode_size = readU16(&sector_buf, 88);
     } else {
         inode_size = 128;
+    }
+
+    // エイリアス設定
+    s_blocks_per_group = blocks_per_group;
+    s_inodes_per_group = inodes_per_group;
+    s_first_data_block = first_data_block;
+
+    // ブロックグループディスクリプタテーブル (BGD) を読む
+    // BGD はスーパーブロックの次のブロックにある
+    const bgd_block = if (block_size == 1024) @as(u32, 2) else @as(u32, 1);
+    var bgd_buf: [4096]u8 align(4) = undefined;
+    if (readBlock(bgd_block, &bgd_buf)) {
+        bgd_block_bitmap = readU32(&bgd_buf, 0);
+        bgd_inode_bitmap = readU32(&bgd_buf, 4);
+        bgd_inode_table = readU32(&bgd_buf, 8);
     }
 
     valid = true;
@@ -339,4 +364,176 @@ fn eql(a: []const u8, b: []const u8) bool {
         if (ca != cb) return false;
     }
     return true;
+}
+
+// ---- 書き込みサポート ----
+
+fn writeBlock(block_num: u32, buf: *const [4096]u8) bool {
+    if (block_size == 0 or block_num == 0) return false;
+    const sector = block_num * (block_size / 512);
+    return ata.writeSectors(sector, @truncate(block_size / 512), buf);
+}
+
+/// ブロックビットマップから空きブロックを割り当て
+fn allocBlock() ?u32 {
+    if (!valid) return null;
+    // ブロックグループ0のビットマップだけ探索 (簡易版)
+    var bitmap_buf: [4096]u8 align(4) = undefined;
+    if (!readBlock(bgd_block_bitmap, &bitmap_buf)) return null;
+
+    var bit: u32 = 0;
+    while (bit < s_blocks_per_group) : (bit += 1) {
+        const byte_idx = bit / 8;
+        const bit_idx: u3 = @truncate(bit % 8);
+        if (byte_idx >= block_size) break;
+        if (bitmap_buf[byte_idx] & (@as(u8, 1) << bit_idx) == 0) {
+            // 空きブロック発見 → マーク
+            bitmap_buf[byte_idx] |= @as(u8, 1) << bit_idx;
+            if (!writeBlock(bgd_block_bitmap, &bitmap_buf)) return null;
+            return s_first_data_block + bit;
+        }
+    }
+    return null;
+}
+
+/// inode ビットマップから空き inode を割り当て
+fn allocInode() ?u32 {
+    if (!valid) return null;
+    var bitmap_buf: [4096]u8 align(4) = undefined;
+    if (!readBlock(bgd_inode_bitmap, &bitmap_buf)) return null;
+
+    var bit: u32 = 0;
+    while (bit < s_inodes_per_group) : (bit += 1) {
+        const byte_idx = bit / 8;
+        const bit_idx: u3 = @truncate(bit % 8);
+        if (byte_idx >= block_size) break;
+        if (bitmap_buf[byte_idx] & (@as(u8, 1) << bit_idx) == 0) {
+            bitmap_buf[byte_idx] |= @as(u8, 1) << bit_idx;
+            if (!writeBlock(bgd_inode_bitmap, &bitmap_buf)) return null;
+            return bit + 1; // inode 番号は 1-based
+        }
+    }
+    return null;
+}
+
+/// inode をディスクに書き戻す
+fn writeInode(ino: u32, inode_data: [128]u8) bool {
+    if (!valid or ino == 0) return false;
+    const idx = ino - 1;
+    const group = idx / s_inodes_per_group;
+    _ = group;
+    const local_idx = idx % s_inodes_per_group;
+    const inode_block = bgd_inode_table + (local_idx * inode_size) / block_size;
+    const offset_in_block = (local_idx * inode_size) % block_size;
+
+    var blk_buf: [4096]u8 align(4) = undefined;
+    if (!readBlock(inode_block, &blk_buf)) return false;
+    @memcpy(blk_buf[offset_in_block .. offset_in_block + @min(inode_size, 128)], inode_data[0..@min(inode_size, 128)]);
+    return writeBlock(inode_block, &blk_buf);
+}
+
+/// ext2 にファイルを作成して書き込み (ルートディレクトリに追加)
+pub fn createAndWrite(name: []const u8, data: []const u8) bool {
+    if (!valid) return false;
+    if (name.len == 0 or name.len > 255) return false;
+
+    // 1. ブロック割り当て (データ用)
+    const data_block = allocBlock() orelse return false;
+
+    // 2. inode 割り当て
+    const ino = allocInode() orelse return false;
+
+    // 3. データブロックに書き込み
+    var data_buf: [4096]u8 align(4) = undefined;
+    @memset(&data_buf, 0);
+    const write_len = @min(data.len, block_size);
+    @memcpy(data_buf[0..write_len], data[0..write_len]);
+    if (!writeBlock(data_block, &data_buf)) return false;
+
+    // 4. inode 構築
+    var inode_data: [128]u8 = [_]u8{0} ** 128;
+    // i_mode = 0x81A4 (regular file, 644)
+    inode_data[0] = 0xA4;
+    inode_data[1] = 0x81;
+    // i_size
+    inode_data[4] = @truncate(data.len);
+    inode_data[5] = @truncate(data.len >> 8);
+    inode_data[6] = @truncate(data.len >> 16);
+    inode_data[7] = @truncate(data.len >> 24);
+    // i_links_count = 1
+    inode_data[26] = 1;
+    // i_blocks = block_size / 512
+    const blocks_count = block_size / 512;
+    inode_data[28] = @truncate(blocks_count);
+    // i_block[0] = data_block
+    inode_data[40] = @truncate(data_block);
+    inode_data[41] = @truncate(data_block >> 8);
+    inode_data[42] = @truncate(data_block >> 16);
+    inode_data[43] = @truncate(data_block >> 24);
+
+    if (!writeInode(ino, inode_data)) return false;
+
+    // 5. ルートディレクトリにエントリ追加
+    return addDirEntry(2, ino, name); // inode 2 = root directory
+}
+
+/// ディレクトリにエントリを追加
+fn addDirEntry(dir_ino: u32, new_ino: u32, name: []const u8) bool {
+    // ルートディレクトリの inode を読む
+    var inode_buf: [128]u8 = undefined;
+    const inode = readInodeRaw(dir_ino, &inode_buf) orelse return false;
+
+    // ディレクトリの最初のブロックを読む
+    const dir_block = readU32(inode[40..].ptr, 0); // i_block[0]
+    if (dir_block == 0) return false;
+
+    var blk_buf: [4096]u8 align(4) = undefined;
+    if (!readBlock(dir_block, &blk_buf)) return false;
+
+    // 既存エントリの末尾を探す
+    var off: usize = 0;
+    while (off + 8 < block_size) {
+        const entry_inode = readU32(&blk_buf, off);
+        const rec_len = readU16(&blk_buf, off + 4);
+        if (rec_len == 0) break;
+        const name_len_val = blk_buf[off + 6];
+        const actual_size = ((8 + @as(usize, name_len_val) + 3) / 4) * 4;
+
+        if (entry_inode == 0 or rec_len >= actual_size + 12 + name.len) {
+            if (entry_inode != 0) {
+                // 既存エントリの rec_len を縮小
+                const new_rec_len: u16 = @truncate(actual_size);
+                blk_buf[off + 4] = @truncate(new_rec_len);
+                blk_buf[off + 5] = @truncate(new_rec_len >> 8);
+                off += actual_size;
+            }
+            // 新エントリを書き込み
+            const remaining: u16 = @truncate(block_size - off);
+            blk_buf[off] = @truncate(new_ino);
+            blk_buf[off + 1] = @truncate(new_ino >> 8);
+            blk_buf[off + 2] = @truncate(new_ino >> 16);
+            blk_buf[off + 3] = @truncate(new_ino >> 24);
+            blk_buf[off + 4] = @truncate(remaining);
+            blk_buf[off + 5] = @truncate(remaining >> 8);
+            blk_buf[off + 6] = @truncate(name.len);
+            blk_buf[off + 7] = 1; // file type: regular file
+            @memcpy(blk_buf[off + 8 .. off + 8 + name.len], name);
+            return writeBlock(dir_block, &blk_buf);
+        }
+        off += rec_len;
+    }
+    return false;
+}
+
+fn readInodeRaw(ino: u32, buf: *[128]u8) ?[*]const u8 {
+    if (!valid or ino == 0) return null;
+    const idx = ino - 1;
+    const local_idx = idx % s_inodes_per_group;
+    const inode_block = bgd_inode_table + (local_idx * inode_size) / block_size;
+    const offset_in_block = (local_idx * inode_size) % block_size;
+
+    var blk_buf: [4096]u8 align(4) = undefined;
+    if (!readBlock(inode_block, &blk_buf)) return null;
+    @memcpy(buf, blk_buf[offset_in_block .. offset_in_block + 128]);
+    return buf;
 }

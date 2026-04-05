@@ -28,6 +28,16 @@ pub const TcpConn = struct {
     recv_buf: [1024]u8,
     recv_len: usize,
     used: bool,
+    // 再送制御
+    rto_ms: u32, // Retransmission Timeout (ms)
+    retries: u8, // 再送回数
+    last_send_tick: u64, // 最後の送信時刻
+    unacked_seq: u32, // 未ACKのシーケンス番号
+    // 輻輳制御
+    cwnd: u16, // Congestion Window (segments)
+    ssthresh: u16, // Slow Start Threshold
+    // TIME_WAIT
+    time_wait_start: u64,
 };
 
 const MAX_CONNS = 4;
@@ -62,6 +72,13 @@ pub fn connect(remote_ip: u32, remote_port: u16, local_port: u16) ?*TcpConn {
         .recv_buf = undefined,
         .recv_len = 0,
         .used = true,
+        .rto_ms = 1000, // 初期 RTO = 1秒
+        .retries = 0,
+        .last_send_tick = pit.getTicks(),
+        .unacked_seq = 0,
+        .cwnd = 1, // slow start: 1 segment
+        .ssthresh = 8, // 初期閾値
+        .time_wait_start = 0,
     };
 
     // SYN 送信
@@ -84,16 +101,46 @@ pub fn connect(remote_ip: u32, remote_port: u16, local_port: u16) ?*TcpConn {
 pub fn send(c: *TcpConn, data: []const u8) bool {
     if (c.state != .established) return false;
 
+    const saved_seq = c.seq_num;
+    c.unacked_seq = saved_seq;
     sendTcpPacket(c, 0x18, data); // PSH | ACK
     c.seq_num += @truncate(data.len);
+    c.last_send_tick = pit.getTicks();
 
-    // ACK 待ち
-    const start = pit.getTicks();
+    // ACK 待ち + 再送ロジック
+    c.retries = 0;
     asm volatile ("sti");
-    while (pit.getTicks() -| start < 2000) {
-        pollTcp();
+    while (c.retries < 5) {
+        const start = pit.getTicks();
+        while (pit.getTicks() -| start < c.rto_ms) {
+            pollTcp();
+            // ACK 確認 (相手がデータを確認した)
+            if (c.unacked_seq != saved_seq) {
+                // ACK 受信成功 → 輻輳ウィンドウ拡大
+                if (c.cwnd < c.ssthresh) {
+                    c.cwnd += 1; // slow start: 指数増加
+                } else {
+                    c.cwnd += 1; // congestion avoidance: 線形増加
+                }
+                // RTO をリセット (成功時は短く)
+                if (c.rto_ms > 200) c.rto_ms -= 100;
+                return true;
+            }
+        }
+        // タイムアウト → 再送
+        c.retries += 1;
+        c.rto_ms = @min(c.rto_ms * 2, 8000); // exponential backoff
+        c.ssthresh = @max(c.cwnd / 2, 1); // 輻輳検出 → 閾値半減
+        c.cwnd = 1; // slow start に戻る
+        c.seq_num = saved_seq; // シーケンス巻き戻し
+        sendTcpPacket(c, 0x18, data); // 再送
+        c.seq_num += @truncate(data.len);
+        c.last_send_tick = pit.getTicks();
+        serial.write("[TCP] retransmit #");
+        serial.writeHex(c.retries);
+        serial.write("\n");
     }
-    return true;
+    return false; // 再送限界
 }
 
 pub fn recv(c: *TcpConn, buf: []u8) usize {
@@ -164,24 +211,25 @@ pub fn handleTcpPacket(src_ip: u32, data: []const u8) void {
                 }
             },
             .established => {
+                // ACK 処理 → unacked_seq を更新 (再送タイマーリセット用)
+                if (flags & 0x10 != 0 and ack > c.unacked_seq) {
+                    c.unacked_seq = ack;
+                }
                 if (flags & 0x01 != 0) { // FIN
                     c.ack_num = seq + 1;
-                    sendTcpPacket(c, 0x10, &.{}); // ACK
+                    sendTcpPacket(c, 0x10, &.{});
                     c.state = .close_wait;
-                    // 自動的に FIN を返す
-                    sendTcpPacket(c, 0x11, &.{}); // FIN+ACK
+                    sendTcpPacket(c, 0x11, &.{});
                     c.seq_num += 1;
                     c.state = .last_ack;
-                } else if (flags & 0x10 != 0) { // ACK (データ含む可能性)
-                    if (data.len > data_off) {
-                        const payload = data[data_off..];
-                        const space = c.recv_buf.len - c.recv_len;
-                        const copy_len = @min(payload.len, space);
-                        @memcpy(c.recv_buf[c.recv_len .. c.recv_len + copy_len], payload[0..copy_len]);
-                        c.recv_len += copy_len;
-                        c.ack_num = seq + @as(u32, @truncate(payload.len));
-                        sendTcpPacket(c, 0x10, &.{}); // ACK
-                    }
+                } else if (data.len > data_off) { // データあり
+                    const payload = data[data_off..];
+                    const space = c.recv_buf.len - c.recv_len;
+                    const copy_len = @min(payload.len, space);
+                    @memcpy(c.recv_buf[c.recv_len .. c.recv_len + copy_len], payload[0..copy_len]);
+                    c.recv_len += copy_len;
+                    c.ack_num = seq + @as(u32, @truncate(payload.len));
+                    sendTcpPacket(c, 0x10, &.{});
                 }
             },
             .fin_wait_1 => {
@@ -199,6 +247,17 @@ pub fn handleTcpPacket(src_ip: u32, data: []const u8) void {
                 if (flags & 0x01 != 0) { // FIN
                     c.ack_num = seq + 1;
                     sendTcpPacket(c, 0x10, &.{});
+                    c.state = .time_wait;
+                    c.time_wait_start = pit.getTicks();
+                }
+            },
+            .time_wait => {
+                // TIME_WAIT 中の遅延 FIN に対して ACK を再送
+                if (flags & 0x01 != 0) {
+                    sendTcpPacket(c, 0x10, &.{});
+                }
+                // 2MSL (4秒) 経過で CLOSED
+                if (pit.getTicks() -| c.time_wait_start > 4000) {
                     c.state = .closed;
                     c.used = false;
                 }

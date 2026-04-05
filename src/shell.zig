@@ -20,6 +20,7 @@ const elf = @import("elf.zig");
 const user = @import("user.zig");
 const tcp = @import("tcp.zig");
 const pipe = @import("pipe.zig");
+const framebuf = @import("framebuf.zig");
 const acpi = @import("acpi.zig");
 const smp = @import("smp.zig");
 const dns = @import("dns.zig");
@@ -193,6 +194,8 @@ fn execute(input: []const u8) void {
         cmdUsb();
     } else if (eql(cmd, "blk")) {
         cmdBlk();
+    } else if (eql(cmd, "gui")) {
+        cmdGui();
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -255,6 +258,7 @@ fn cmdHelp() void {
     vga.write("  ext2    - ext2 filesystem info\n");
     vga.write("  usb     - USB controller info\n");
     vga.write("  blk     - Block devices\n");
+    vga.write("  gui     - Graphics demo (Mode 13h)\n");
 }
 
 fn cmdClear() void {
@@ -883,6 +887,19 @@ fn cmdUsb() void {
 
 fn cmdBlk() void {
     blkdev.printDevices();
+}
+
+fn cmdGui() void {
+    vga.setColor(.light_grey, .black);
+    vga.write("Switching to graphics mode...\n");
+    framebuf.demo();
+    // キー入力待ち → テキストモードに戻る (次のキーボード IRQ で)
+    // hlt で待機し、次のキー入力で戻る
+    asm volatile ("sti; hlt");
+    framebuf.exitMode13h();
+    vga.init();
+    vga.setColor(.light_green, .black);
+    vga.write("Returned to text mode.\n");
 }
 
 fn parseU16(s: []const u8) ?u16 {

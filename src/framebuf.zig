@@ -227,3 +227,152 @@ fn initFontData() [95][16]u8 {
 
     return data;
 }
+
+// ---- VGA Mode 13h (320x200, 256色) ----
+// I/O ポートで VGA レジスタを直接プログラミング
+
+const idt = @import("idt.zig");
+
+/// VGA Mode 13h を有効にして 320x200 256色フレームバッファを取得
+pub fn enterMode13h() void {
+    // VGA Mode 13h のレジスタ値をプログラム
+    // Miscellaneous Output Register
+    idt.outb(0x3C2, 0x63);
+
+    // Sequencer
+    idt.outb(0x3C4, 0x00);
+    idt.outb(0x3C5, 0x03); // Reset
+    idt.outb(0x3C4, 0x01);
+    idt.outb(0x3C5, 0x01); // Clocking Mode
+    idt.outb(0x3C4, 0x02);
+    idt.outb(0x3C5, 0x0F); // Map Mask
+    idt.outb(0x3C4, 0x03);
+    idt.outb(0x3C5, 0x00); // Character Map
+    idt.outb(0x3C4, 0x04);
+    idt.outb(0x3C5, 0x0E); // Memory Mode
+
+    // Unlock CRTC
+    idt.outb(0x3D4, 0x11);
+    idt.outb(0x3D5, idt.inb(0x3D5) & 0x7F);
+
+    // CRTC registers for 320x200
+    const crtc_regs = [25]u8{
+        0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F,
+        0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3,
+        0xFF,
+    };
+    for (crtc_regs, 0..) |val, i| {
+        idt.outb(0x3D4, @truncate(i));
+        idt.outb(0x3D5, val);
+    }
+
+    // Graphics Controller
+    const gc_regs = [9]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
+    for (gc_regs, 0..) |val, i| {
+        idt.outb(0x3CE, @truncate(i));
+        idt.outb(0x3CF, val);
+    }
+
+    // Attribute Controller
+    const ac_regs = [21]u8{
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x41, 0x00, 0x0F, 0x00, 0x00,
+    };
+    _ = idt.inb(0x3DA); // Reset ATC flip-flop
+    for (ac_regs, 0..) |val, i| {
+        idt.outb(0x3C0, @truncate(i));
+        idt.outb(0x3C0, val);
+    }
+    idt.outb(0x3C0, 0x20); // Enable display
+
+    // フレームバッファ設定 (0xA0000, 320x200, 8bpp)
+    fb_addr = 0xA0000;
+    fb_width = 320;
+    fb_height = 200;
+    fb_bpp = 8;
+    fb_pitch = 320;
+    available = true;
+}
+
+/// VGA テキストモード (Mode 3) に戻す
+pub fn exitMode13h() void {
+    // Mode 3 復帰: 簡易的に主要レジスタだけリセット
+    idt.outb(0x3C2, 0x67);
+
+    // Sequencer reset
+    idt.outb(0x3C4, 0x00);
+    idt.outb(0x3C5, 0x03);
+    idt.outb(0x3C4, 0x01);
+    idt.outb(0x3C5, 0x00);
+    idt.outb(0x3C4, 0x02);
+    idt.outb(0x3C5, 0x03);
+    idt.outb(0x3C4, 0x03);
+    idt.outb(0x3C5, 0x00);
+    idt.outb(0x3C4, 0x04);
+    idt.outb(0x3C5, 0x02);
+
+    // CRTC for 80x25 text
+    idt.outb(0x3D4, 0x11);
+    idt.outb(0x3D5, idt.inb(0x3D5) & 0x7F);
+    const text_crtc = [25]u8{
+        0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,
+        0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x00,
+        0x9C, 0x0E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3,
+        0xFF,
+    };
+    for (text_crtc, 0..) |val, i| {
+        idt.outb(0x3D4, @truncate(i));
+        idt.outb(0x3D5, val);
+    }
+
+    // Graphics controller for text
+    const text_gc = [9]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00, 0xFF };
+    for (text_gc, 0..) |val, i| {
+        idt.outb(0x3CE, @truncate(i));
+        idt.outb(0x3CF, val);
+    }
+
+    // ATC for text
+    _ = idt.inb(0x3DA);
+    const text_ac = [21]u8{
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
+        0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+        0x0C, 0x00, 0x0F, 0x08, 0x00,
+    };
+    for (text_ac, 0..) |val, i| {
+        idt.outb(0x3C0, @truncate(i));
+        idt.outb(0x3C0, val);
+    }
+    idt.outb(0x3C0, 0x20);
+
+    available = false;
+}
+
+/// Mode 13h デモ: 画面に色パターンを描画
+pub fn demo() void {
+    enterMode13h();
+
+    // 背景: グラデーション
+    clear(0);
+    var y: u32 = 0;
+    while (y < 200) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 320) : (x += 1) {
+            const color: u8 = @truncate((x + y) / 3);
+            putPixel(x, y, color);
+        }
+    }
+
+    // 矩形
+    fillRect(20, 20, 80, 40, 4); // 赤
+    fillRect(120, 20, 80, 40, 2); // 緑
+    fillRect(220, 20, 80, 40, 1); // 青
+
+    // テキスト
+    drawString(30, 80, "Zig Kernel v1.0", 15);
+    drawString(30, 100, "VGA Mode 13h (320x200)", 14);
+    drawString(30, 120, "Press any key to return", 7);
+}
+
