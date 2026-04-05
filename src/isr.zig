@@ -1,29 +1,29 @@
-// CPU例外ハンドラ — GPF, ページフォルト等のトラップ処理
+// CPU例外ハンドラ — GPF, ページフォルト等のトラップ処理 + panic + スタックトレース
 
 const vga = @import("vga.zig");
 const serial = @import("serial.zig");
 
 const exception_names = [_][]const u8{
-    "Division by Zero",
-    "Debug",
-    "NMI",
-    "Breakpoint",
-    "Overflow",
-    "Bound Range Exceeded",
-    "Invalid Opcode",
-    "Device Not Available",
-    "Double Fault",
-    "Coprocessor Overrun",
-    "Invalid TSS",
-    "Segment Not Present",
-    "Stack-Segment Fault",
-    "General Protection Fault",
-    "Page Fault",
-    "Reserved",
-    "x87 FP Error",
-    "Alignment Check",
-    "Machine Check",
-    "SIMD FP Exception",
+    "Division by Zero",        // 0
+    "Debug",                   // 1
+    "NMI",                     // 2
+    "Breakpoint",              // 3
+    "Overflow",                // 4
+    "Bound Range Exceeded",    // 5
+    "Invalid Opcode",          // 6
+    "Device Not Available",    // 7
+    "Double Fault",            // 8
+    "Coprocessor Overrun",     // 9
+    "Invalid TSS",             // 10
+    "Segment Not Present",     // 11
+    "Stack-Segment Fault",     // 12
+    "General Protection Fault", // 13
+    "Page Fault",              // 14
+    "Reserved",                // 15
+    "x87 FP Error",            // 16
+    "Alignment Check",         // 17
+    "Machine Check",           // 18
+    "SIMD FP Exception",       // 19
 };
 
 pub fn handler(vector: u32, error_code: u32) void {
@@ -45,6 +45,13 @@ pub fn handler(vector: u32, error_code: u32) void {
         vga.write("  Fault addr: 0x");
         printHex(cr2);
         vga.putChar('\n');
+
+        // Page fault error code bits
+        vga.write("  Cause: ");
+        if (error_code & 1 != 0) vga.write("protection ") else vga.write("not-present ");
+        if (error_code & 2 != 0) vga.write("write ") else vga.write("read ");
+        if (error_code & 4 != 0) vga.write("user") else vga.write("kernel");
+        vga.putChar('\n');
     }
 
     if (error_code != 0) {
@@ -53,13 +60,80 @@ pub fn handler(vector: u32, error_code: u32) void {
         vga.putChar('\n');
     }
 
+    // スタックトレース (EBP chain)
+    vga.setColor(.yellow, .black);
+    vga.write("  Stack trace:\n");
+    vga.setColor(.light_grey, .black);
+    var ebp: u32 = asm volatile ("mov %%ebp, %[ebp]"
+        : [ebp] "=r" (-> u32),
+    );
+    var depth: usize = 0;
+    while (ebp != 0 and depth < 10) {
+        // ebp+4 = return address
+        const frame: [*]const u32 = @ptrFromInt(ebp);
+        // 安全チェック: カーネルメモリ範囲内か
+        if (ebp < 0x100000 or ebp >= 0x8000000) break;
+        const ret_addr = frame[1];
+        if (ret_addr == 0) break;
+        vga.write("    [");
+        printDec32(@truncate(depth));
+        vga.write("] 0x");
+        printHex(ret_addr);
+        vga.putChar('\n');
+        ebp = frame[0]; // 前のフレームの EBP
+        depth += 1;
+    }
+
     serial.write("[EXCEPTION] #");
     serial.writeHex(vector);
     serial.write(" err=");
     serial.writeHex(error_code);
     serial.write("\n");
 
+    halt();
+}
+
+/// カーネルパニック — 致命的エラーで停止
+pub fn panic(msg: []const u8) void {
+    vga.setColor(.light_red, .black);
+    vga.write("\n!!! KERNEL PANIC: ");
+    vga.write(msg);
+    vga.putChar('\n');
+
+    serial.write("[PANIC] ");
+    serial.write(msg);
+    serial.write("\n");
+
+    // スタックトレース
     vga.setColor(.yellow, .black);
+    vga.write("  Stack trace:\n");
+    vga.setColor(.light_grey, .black);
+    var ebp: u32 = asm volatile ("mov %%ebp, %[ebp]"
+        : [ebp] "=r" (-> u32),
+    );
+    var depth: usize = 0;
+    while (ebp != 0 and depth < 10) {
+        if (ebp < 0x100000 or ebp >= 0x8000000) break;
+        const frame: [*]const u32 = @ptrFromInt(ebp);
+        const ret_addr = frame[1];
+        if (ret_addr == 0) break;
+        vga.write("    [");
+        printDec32(@truncate(depth));
+        vga.write("] 0x");
+        printHex(ret_addr);
+        vga.putChar('\n');
+        serial.write("  [");
+        serial.writeHex(ret_addr);
+        serial.write("]\n");
+        ebp = frame[0];
+        depth += 1;
+    }
+
+    halt();
+}
+
+fn halt() void {
+    vga.setColor(.dark_grey, .black);
     vga.write("  System halted.\n");
     asm volatile ("cli");
     while (true) {
@@ -97,4 +171,8 @@ fn printDec(n: u32) void {
         len -= 1;
         vga.putChar(buf[len]);
     }
+}
+
+fn printDec32(n: u32) void {
+    printDec(n);
 }

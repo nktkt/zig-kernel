@@ -2,8 +2,13 @@
 
 const idt = @import("idt.zig");
 const shell = @import("shell.zig");
+const task = @import("task.zig");
+const serial = @import("serial.zig");
 
 const KBD_DATA_PORT = 0x60;
+
+// Modifier keys state
+var ctrl_held: bool = false;
 
 // US キーボードレイアウト (スキャンコードセット 1)
 const scancode_table = [128]u8{
@@ -25,8 +30,42 @@ const scancode_table = [128]u8{
 pub fn handleIrq() void {
     const scancode = idt.inb(KBD_DATA_PORT);
 
+    // Ctrl キーの状態追跡
+    if (scancode == 0x1D) { // Left Ctrl press
+        ctrl_held = true;
+        return;
+    }
+    if (scancode == 0x9D) { // Left Ctrl release
+        ctrl_held = false;
+        return;
+    }
+
     // キーリリース (bit 7) は無視
     if (scancode & 0x80 != 0) return;
+
+    // Ctrl+C → SIGINT を全ユーザープロセスに送信
+    if (ctrl_held and scancode == 0x2E) { // 'c' = scancode 0x2E
+        serial.write("[kbd] Ctrl+C -> SIGINT\n");
+        // 現在動作中のユーザータスク (pid > 0) に SIGINT を送信
+        var i: u32 = 1;
+        while (i < task.MAX_TASKS) : (i += 1) {
+            if (task.getTask(i)) |t| {
+                if (t.pid > 0) {
+                    _ = task.sendSignal(t.pid, task.SIG_INT);
+                }
+            }
+        }
+        shell.handleKey('^');
+        shell.handleKey('C');
+        shell.handleKey('\n');
+        return;
+    }
+
+    // Ctrl+D → EOF 表示
+    if (ctrl_held and scancode == 0x20) { // 'd' = scancode 0x20
+        shell.handleKey(4); // EOT
+        return;
+    }
 
     const ascii = scancode_table[scancode];
     if (ascii != 0) {

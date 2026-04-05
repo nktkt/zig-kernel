@@ -119,7 +119,7 @@ pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
         .kernel_esp = kstack_top - 13 * 4,
         .kernel_stack = kstack,
         .user_stack = ustack,
-        .page_dir = 0, // カーネル共有 PD (identity mapped)
+        .page_dir = vmm.getCR3(), // カーネル PD (identity mapped)
         .exit_code = 0,
         .pending_signal = SIG_NONE,
         .name = undefined,
@@ -198,7 +198,7 @@ pub fn fork() i32 {
         .kernel_esp = child_esp,
         .kernel_stack = kstack,
         .user_stack = ustack,
-        .page_dir = 0, // カーネル共有
+        .page_dir = vmm.getCR3(), // カーネル PD 共有 (identity mapped)
         .exit_code = 0,
         .pending_signal = SIG_NONE,
         .name = parent.name,
@@ -314,6 +314,14 @@ pub export fn timerSchedule(esp: u32) u32 {
 
     tasks[current_task].kernel_esp = esp;
 
+    // zombie 回収 (カーネル PID=0 が init として機能)
+    for (&tasks) |*t| {
+        if (t.state == .zombie and t.ppid == 0) {
+            t.state = .unused;
+            task_count -= 1;
+        }
+    }
+
     // pending signal チェック
     if (tasks[current_task].pending_signal == SIG_INT) {
         tasks[current_task].pending_signal = SIG_NONE;
@@ -339,6 +347,13 @@ pub export fn timerSchedule(esp: u32) u32 {
     current_task = next;
 
     tss.setKernelStack(tasks[next].kernel_stack + KERNEL_STACK_SIZE);
+
+    // CR3 切替: プロセスごとのページディレクトリ
+    const next_pd = tasks[next].page_dir;
+    const prev_pd = tasks[prev].page_dir;
+    if (next_pd != 0 and next_pd != prev_pd) {
+        vmm.switchTo(next_pd);
+    }
 
     return tasks[next].kernel_esp;
 }
