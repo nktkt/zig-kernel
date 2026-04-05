@@ -28,6 +28,17 @@ const keyboard = @import("keyboard.zig");
 const smp = @import("smp.zig");
 const dns = @import("dns.zig");
 const ext2 = @import("ext2.zig");
+const devfs = @import("devfs.zig");
+const procfs = @import("procfs.zig");
+const tty_mod = @import("tty.zig");
+const test_suite = @import("test_suite.zig");
+const ksh = @import("ksh.zig");
+const editor = @import("editor.zig");
+const game = @import("game.zig");
+const config = @import("config.zig");
+const slab = @import("slab.zig");
+const mmu = @import("mmu.zig");
+const crypto = @import("crypto.zig");
 const uhci = @import("uhci.zig");
 const blkdev = @import("blkdev.zig");
 const cmos = @import("cmos.zig");
@@ -167,6 +178,10 @@ fn printPrompt() void {
     vga.setColor(.white, .black);
 }
 
+pub fn executeCommand(input: []const u8) void {
+    execute(input);
+}
+
 fn execute(input: []const u8) void {
     const full = trim(input);
     if (full.len == 0) return;
@@ -298,6 +313,28 @@ fn execute(input: []const u8) void {
         cmdLog(args);
     } else if (eql(cmd, "benchmark")) {
         cmdBenchmark();
+    } else if (eql(cmd, "devs")) {
+        devfs.printDevices();
+    } else if (eql(cmd, "proc")) {
+        cmdProc(args);
+    } else if (eql(cmd, "tty")) {
+        tty_mod.printInfo();
+    } else if (eql(cmd, "test")) {
+        test_suite.runAll();
+    } else if (eql(cmd, "script")) {
+        cmdScript(args);
+    } else if (eql(cmd, "edit")) {
+        cmdEdit(args);
+    } else if (eql(cmd, "guess")) {
+        game.startGuessing();
+    } else if (eql(cmd, "config")) {
+        config.printAll();
+    } else if (eql(cmd, "slab")) {
+        slab.printInfo();
+    } else if (eql(cmd, "mmap")) {
+        mmu.printMemoryMap();
+    } else if (eql(cmd, "crc32")) {
+        cmdCrc32(args);
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -1164,6 +1201,57 @@ fn cmdHistory() void {
         vga.write("  ");
         vga.write(history[idx][0..history_lens[idx]]);
         vga.putChar('\n');
+    }
+}
+
+fn cmdProc(args: []const u8) void {
+    if (args.len == 0) {
+        procfs.listFiles();
+        return;
+    }
+    var buf: [512]u8 = undefined;
+    if (procfs.readFile(args, &buf)) |len| {
+        vga.write(buf[0..len]);
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("No such proc file: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+fn cmdScript(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: script <filename>\n");
+        return;
+    }
+    ksh.executeFile(args);
+}
+
+fn cmdEdit(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: edit <filename>\n");
+        return;
+    }
+    editor.start(args);
+}
+
+fn cmdCrc32(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: crc32 <filename>\n");
+        return;
+    }
+    if (ramfs.findByName(args)) |idx| {
+        if (ramfs.getFile(idx)) |f| {
+            const crc = crypto.crc32(f.data[0..f.size]);
+            vga.setColor(.light_grey, .black);
+            vga.write("CRC32: ");
+            fmt.printHex32(crc);
+            vga.putChar('\n');
+        }
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("File not found\n");
     }
 }
 
