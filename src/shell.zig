@@ -22,15 +22,30 @@ const tcp = @import("tcp.zig");
 const pipe = @import("pipe.zig");
 const framebuf = @import("framebuf.zig");
 const acpi = @import("acpi.zig");
+const fmt = @import("fmt.zig");
+const env = @import("env.zig");
+const keyboard = @import("keyboard.zig");
 const smp = @import("smp.zig");
 const dns = @import("dns.zig");
 const ext2 = @import("ext2.zig");
 const uhci = @import("uhci.zig");
 const blkdev = @import("blkdev.zig");
+const cmos = @import("cmos.zig");
+const timer = @import("timer.zig");
+const log = @import("log.zig");
+const version = @import("version.zig");
 
 const MAX_INPUT = 256;
 var input_buf: [MAX_INPUT]u8 = undefined;
 var input_len: usize = 0;
+
+// コマンド履歴
+const HISTORY_SIZE = 8;
+var history: [HISTORY_SIZE][MAX_INPUT]u8 = undefined;
+var history_lens: [HISTORY_SIZE]usize = [_]usize{0} ** HISTORY_SIZE;
+var history_count: usize = 0;
+var history_pos: usize = 0; // 現在の閲覧位置
+var history_browsing: bool = false;
 
 // 最後に alloc したアドレスを記録
 var last_page_alloc: ?usize = null;
@@ -38,7 +53,34 @@ var last_heap_alloc: ?[*]u8 = null;
 
 pub fn init() void {
     input_len = 0;
+    history_count = 0;
+    history_browsing = false;
     printPrompt();
+}
+
+fn addHistory(cmd: []const u8) void {
+    if (cmd.len == 0) return;
+    const idx = history_count % HISTORY_SIZE;
+    @memcpy(history[idx][0..cmd.len], cmd);
+    history_lens[idx] = cmd.len;
+    history_count += 1;
+    history_browsing = false;
+}
+
+fn clearInputLine() void {
+    // 現在の入力を消去
+    while (input_len > 0) {
+        input_len -= 1;
+        vga.backspace();
+    }
+}
+
+fn setInput(s: []const u8) void {
+    clearInputLine();
+    const len = @min(s.len, MAX_INPUT - 1);
+    @memcpy(input_buf[0..len], s[0..len]);
+    input_len = len;
+    vga.write(input_buf[0..input_len]);
 }
 
 pub fn handleKey(char: u8) void {
@@ -46,9 +88,14 @@ pub fn handleKey(char: u8) void {
         '\n' => {
             vga.putChar('\n');
             if (input_len > 0) {
-                execute(input_buf[0..input_len]);
+                addHistory(input_buf[0..input_len]);
+                // 環境変数展開
+                var expanded: [256]u8 = undefined;
+                const exp_len = env.expand(input_buf[0..input_len], &expanded);
+                execute(expanded[0..exp_len]);
             }
             input_len = 0;
+            history_browsing = false;
             printPrompt();
         },
         8 => { // backspace
@@ -57,7 +104,38 @@ pub fn handleKey(char: u8) void {
                 vga.backspace();
             }
         },
+        12 => { // Ctrl+L → clear
+            vga.init();
+            printPrompt();
+        },
+        keyboard.KEY_UP => { // 上矢印 → 履歴を遡る
+            if (history_count > 0) {
+                if (!history_browsing) {
+                    history_pos = history_count;
+                    history_browsing = true;
+                }
+                if (history_pos > 0) {
+                    history_pos -= 1;
+                    const idx = history_pos % HISTORY_SIZE;
+                    setInput(history[idx][0..history_lens[idx]]);
+                }
+            }
+        },
+        keyboard.KEY_DOWN => { // 下矢印 → 履歴を進む
+            if (history_browsing) {
+                if (history_pos + 1 < history_count) {
+                    history_pos += 1;
+                    const idx = history_pos % HISTORY_SIZE;
+                    setInput(history[idx][0..history_lens[idx]]);
+                } else {
+                    history_pos = history_count;
+                    clearInputLine();
+                }
+            }
+        },
         else => {
+            // 特殊キーは無視
+            if (char >= 0x80) return;
             if (input_len < MAX_INPUT - 1) {
                 input_buf[input_len] = char;
                 input_len += 1;
@@ -196,6 +274,30 @@ fn execute(input: []const u8) void {
         cmdBlk();
     } else if (eql(cmd, "gui")) {
         cmdGui();
+    } else if (eql(cmd, "echo")) {
+        cmdEcho(args);
+    } else if (eql(cmd, "env")) {
+        cmdEnv();
+    } else if (eql(cmd, "set")) {
+        cmdSet(args);
+    } else if (eql(cmd, "sysinfo")) {
+        cmdSysinfo();
+    } else if (eql(cmd, "hexdump")) {
+        cmdHexdump(args);
+    } else if (eql(cmd, "sleep")) {
+        cmdSleep(args);
+    } else if (eql(cmd, "history")) {
+        cmdHistory();
+    } else if (eql(cmd, "cmos")) {
+        cmdCmos();
+    } else if (eql(cmd, "timers")) {
+        cmdTimers();
+    } else if (eql(cmd, "version")) {
+        cmdVersion();
+    } else if (eql(cmd, "log")) {
+        cmdLog(args);
+    } else if (eql(cmd, "benchmark")) {
+        cmdBenchmark();
     } else {
         vga.setColor(.light_red, .black);
         vga.write("Unknown command: ");
@@ -259,6 +361,18 @@ fn cmdHelp() void {
     vga.write("  usb     - USB controller info\n");
     vga.write("  blk     - Block devices\n");
     vga.write("  gui     - Graphics demo (Mode 13h)\n");
+    vga.write("  echo <t> - Print text\n");
+    vga.write("  env     - Environment variables\n");
+    vga.write("  set <k>=<v> - Set env variable\n");
+    vga.write("  sysinfo - System information\n");
+    vga.write("  hexdump <f> - Hex dump of file\n");
+    vga.write("  sleep <ms> - Sleep milliseconds\n");
+    vga.write("  history - Command history\n");
+    vga.write("  cmos    - CMOS/RTC info\n");
+    vga.write("  timers  - Active timers\n");
+    vga.write("  version - Kernel version\n");
+    vga.write("  log <l> - Set log level\n");
+    vga.write("  benchmark - Memory benchmark\n");
 }
 
 fn cmdClear() void {
@@ -889,6 +1003,170 @@ fn cmdBlk() void {
     blkdev.printDevices();
 }
 
+fn cmdEcho(args: []const u8) void {
+    vga.write(args);
+    vga.putChar('\n');
+}
+
+fn cmdEnv() void {
+    env.printAll();
+}
+
+fn cmdSet(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: set KEY=VALUE\n");
+        return;
+    }
+    if (fmt.indexOf(args, '=')) |eq_pos| {
+        const key = args[0..eq_pos];
+        const val = if (eq_pos + 1 < args.len) args[eq_pos + 1 ..] else "";
+        if (env.set(key, val)) {
+            vga.setColor(.light_green, .black);
+            vga.write(key);
+            vga.putChar('=');
+            vga.write(val);
+            vga.putChar('\n');
+        } else {
+            vga.setColor(.light_red, .black);
+            vga.write("Failed to set variable\n");
+        }
+    } else {
+        vga.write("Usage: set KEY=VALUE\n");
+    }
+}
+
+fn cmdSysinfo() void {
+    vga.setColor(.light_cyan, .black);
+    vga.write("        ___       \n");
+    vga.write("       /   \\      ");
+    vga.setColor(.white, .black);
+    vga.write(user.getCurrentName());
+    vga.putChar('@');
+    if (env.get("HOSTNAME")) |h| vga.write(h);
+    vga.putChar('\n');
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("      |  Z  |     ");
+    vga.setColor(.light_grey, .black);
+    vga.write("OS:      ");
+    if (env.get("OS")) |v| vga.write(v);
+    vga.putChar('\n');
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("      |     |     ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Kernel:  Zig Kernel v");
+    if (env.get("VERSION")) |v| vga.write(v);
+    vga.putChar('\n');
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("       \\___/      ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Shell:   ");
+    if (env.get("SHELL")) |v| vga.write(v);
+    vga.putChar('\n');
+
+    vga.setColor(.light_cyan, .black);
+    vga.write("                  ");
+    vga.setColor(.light_grey, .black);
+    vga.write("Term:    ");
+    if (env.get("TERM")) |v| vga.write(v);
+    vga.putChar('\n');
+
+    vga.write("                  Uptime:  ");
+    pit.printUptime();
+
+    vga.write("                  Memory:  ");
+    pmm.printNum(pmm.freeCount() * 4);
+    vga.write("KB / ");
+    pmm.printNum(pmm.totalCount() * 4);
+    vga.write("KB\n");
+
+    vga.write("                  CPU:     x86 (");
+    pmm.printNum(smp.getCpuCount());
+    vga.write(" core)\n");
+
+    vga.write("                  Net:     ");
+    if (e1000.isInitialized()) {
+        fmt.printMac(e1000.mac);
+    } else {
+        vga.write("none");
+    }
+    vga.putChar('\n');
+
+    // カラーパレット
+    vga.write("                  ");
+    inline for (0..8) |c| {
+        vga.setColor(@enumFromInt(c), @enumFromInt(c));
+        vga.write("  ");
+    }
+    vga.setColor(.light_grey, .black);
+    vga.putChar('\n');
+    vga.write("                  ");
+    inline for (8..16) |c| {
+        vga.setColor(@enumFromInt(c), @enumFromInt(c));
+        vga.write("  ");
+    }
+    vga.setColor(.light_grey, .black);
+    vga.putChar('\n');
+}
+
+fn cmdHexdump(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: hexdump <filename>\n");
+        return;
+    }
+    if (ramfs.findByName(args)) |idx| {
+        if (ramfs.getFile(idx)) |f| {
+            fmt.hexdump(f.data[0..f.size], 0);
+        }
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("File not found: ");
+        vga.write(args);
+        vga.putChar('\n');
+    }
+}
+
+fn cmdSleep(args: []const u8) void {
+    if (args.len == 0) {
+        vga.write("Usage: sleep <ms>\n");
+        return;
+    }
+    const ms = fmt.parseU32(args) orelse {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid number\n");
+        return;
+    };
+    vga.setColor(.light_grey, .black);
+    vga.write("Sleeping ");
+    pmm.printNum(ms);
+    vga.write("ms...\n");
+    const start = pit.getTicks();
+    asm volatile ("sti");
+    while (pit.getTicks() -| start < ms) {
+        asm volatile ("hlt");
+    }
+    vga.setColor(.light_green, .black);
+    vga.write("Done.\n");
+}
+
+fn cmdHistory() void {
+    vga.setColor(.yellow, .black);
+    vga.write("Command History:\n");
+    vga.setColor(.light_grey, .black);
+    const start = if (history_count > HISTORY_SIZE) history_count - HISTORY_SIZE else 0;
+    var i = start;
+    while (i < history_count) : (i += 1) {
+        const idx = i % HISTORY_SIZE;
+        vga.write("  ");
+        pmm.printNum(i + 1);
+        vga.write("  ");
+        vga.write(history[idx][0..history_lens[idx]]);
+        vga.putChar('\n');
+    }
+}
+
 fn cmdGui() void {
     vga.setColor(.light_grey, .black);
     vga.write("Switching to graphics mode...\n");
@@ -900,6 +1178,45 @@ fn cmdGui() void {
     vga.init();
     vga.setColor(.light_green, .black);
     vga.write("Returned to text mode.\n");
+}
+
+fn cmdCmos() void {
+    cmos.printInfo();
+}
+
+fn cmdTimers() void {
+    timer.printTimers();
+}
+
+fn cmdVersion() void {
+    version.printVersion();
+}
+
+fn cmdLog(args: []const u8) void {
+    if (args.len == 0) {
+        log.printStatus();
+        vga.setColor(.light_grey, .black);
+        vga.write("Usage: log <debug|info|warn|err|fatal>\n");
+        return;
+    }
+    if (log.parseLevel(args)) |level| {
+        log.setLevel(level);
+        vga.setColor(.light_green, .black);
+        vga.write("Log level set to: ");
+        vga.write(level.name());
+        vga.putChar('\n');
+    } else {
+        vga.setColor(.light_red, .black);
+        vga.write("Invalid log level: ");
+        vga.write(args);
+        vga.putChar('\n');
+        vga.setColor(.light_grey, .black);
+        vga.write("Valid levels: debug, info, warn, err, fatal\n");
+    }
+}
+
+fn cmdBenchmark() void {
+    timer.benchmark("memory_rw", &timer.memBenchmark);
 }
 
 fn parseU16(s: []const u8) ?u16 {

@@ -21,6 +21,7 @@ const vfs = @import("vfs.zig");
 const pipe_mod = @import("pipe.zig");
 const user = @import("user.zig");
 const init_mod = @import("init.zig");
+const env = @import("env.zig");
 const shell = @import("shell.zig");
 const acpi = @import("acpi.zig");
 const smp = @import("smp.zig");
@@ -29,6 +30,15 @@ const blkdev = @import("blkdev.zig");
 const ext2 = @import("ext2.zig");
 const uhci = @import("uhci.zig");
 const dns = @import("dns.zig");
+const cmos = @import("cmos.zig");
+const timer = @import("timer.zig");
+const log = @import("log.zig");
+const version = @import("version.zig");
+const panic_screen = @import("panic_screen.zig");
+const ringbuf = @import("ringbuf.zig");
+const bitmap_mod = @import("bitmap.zig");
+const string = @import("string.zig");
+const list = @import("list.zig");
 
 // Multiboot1 header
 const MULTIBOOT_MAGIC = 0x1BADB002;
@@ -118,6 +128,7 @@ export fn kmain(mb_info_addr: u32) void {
     logInit("[VFS] ", vfs.init);
     logInit("[PIPE]", pipe_mod.init);
     logInit("[USER]", user.init);
+    logInit("[ENV] ", env.init);
 
     // ネットワーク (E1000 があれば初期化)
     vga.setColor(.light_cyan, .black);
@@ -148,6 +159,19 @@ export fn kmain(mb_info_addr: u32) void {
         logInit("[DNS] ", dns.init);
     }
 
+    // Milestone 3: 追加サブシステム
+    logInit("[CMOS]", cmos.init);
+    logInit("[LOG] ", logSubInit);
+    logInit("[VER] ", versionInit);
+
+    // 強制参照: コンパイラが未使用インポートを検出しないよう
+    _ = &timer.tickCallbacks;
+    _ = &panic_screen.panic;
+    _ = &ringbuf.RingBuffer;
+    _ = &bitmap_mod.Bitmap;
+    _ = &string.strlen;
+    _ = &list.List;
+
     vga.setColor(.light_cyan, .black);
     vga.write("[MEM]  ");
     vga.setColor(.light_grey, .black);
@@ -166,6 +190,14 @@ export fn kmain(mb_info_addr: u32) void {
     // zombie 回収は timerSchedule 内で実行
     // シェルはカーネル内で直接実行 (キーボード IRQ 経由)
     shell.init();
+}
+
+fn logSubInit() void {
+    log.setLevel(.info);
+}
+
+fn versionInit() void {
+    version.printBanner();
 }
 
 // stack_top はリンカスクリプトで定義

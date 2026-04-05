@@ -68,6 +68,10 @@ pub fn freeCount() usize {
     return 0;
 }
 
+pub fn totalCount() usize {
+    return total_pages;
+}
+
 pub fn printStatus() void {
     vga.write("Memory: ");
     printNum(freeCount() * 4);
