@@ -33,7 +33,6 @@ pub const Mode = enum(u8) {
     text_80x25 = 0x03,
     gfx_320x200x4 = 0x04,
     gfx_640x200x2 = 0x06,
-    text_80x25_ega = 0x03,
     unknown = 0xFF,
 };
 
@@ -123,7 +122,7 @@ var cursor_end: u8 = 0x0E; // Default cursor end scanline
 /// Set the video mode by programming VGA registers
 pub fn setMode(mode: Mode) void {
     switch (mode) {
-        .text_80x25, .text_80x25_ega => {
+        .text_80x25 => {
             programRegisters(
                 mode_80x25_misc,
                 &mode_80x25_seq,
