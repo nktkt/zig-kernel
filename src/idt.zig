@@ -5,6 +5,7 @@ const keyboard = @import("keyboard.zig");
 const pit = @import("pit.zig");
 const task = @import("task.zig");
 const isr = @import("isr.zig");
+const serial = @import("serial.zig");
 
 const IdtEntry = packed struct {
     offset_low: u16, // bits 0-15 of handler
