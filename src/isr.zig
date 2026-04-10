@@ -1,4 +1,4 @@
-// CPU例外ハンドラ — GPF, ページフォルト等のトラップ処理 + panic + スタックトレース
+// CPU例外ハンドラ — GPF, ページフォルト等のトラップ処理 + panic + スタックトレース (64-bit)
 
 const vga = @import("vga.zig");
 const serial = @import("serial.zig");
@@ -40,10 +40,10 @@ pub fn handler(vector: u32, error_code: u32) void {
 
     if (vector == 14) {
         const cr2 = asm volatile ("mov %%cr2, %[cr2]"
-            : [cr2] "=r" (-> u32),
+            : [cr2] "=r" (-> u64),
         );
         vga.write("  Fault addr: 0x");
-        printHex(cr2);
+        printHex64(cr2);
         vga.putChar('\n');
 
         // Page fault error code bits
@@ -60,27 +60,27 @@ pub fn handler(vector: u32, error_code: u32) void {
         vga.putChar('\n');
     }
 
-    // スタックトレース (EBP chain)
+    // スタックトレース (RBP chain)
     vga.setColor(.yellow, .black);
     vga.write("  Stack trace:\n");
     vga.setColor(.light_grey, .black);
-    var ebp: u32 = asm volatile ("mov %%ebp, %[ebp]"
-        : [ebp] "=r" (-> u32),
+    var rbp: u64 = asm volatile ("mov %%rbp, %[rbp]"
+        : [rbp] "=r" (-> u64),
     );
     var depth: usize = 0;
-    while (ebp != 0 and depth < 10) {
-        // ebp+4 = return address
-        const frame: [*]const u32 = @ptrFromInt(ebp);
+    while (rbp != 0 and depth < 10) {
+        // rbp+8 = return address
+        const frame: [*]const u64 = @ptrFromInt(@as(usize, @truncate(rbp)));
         // 安全チェック: カーネルメモリ範囲内か
-        if (ebp < 0x100000 or ebp >= 0x8000000) break;
+        if (rbp < 0x100000 or rbp >= 0x8000000) break;
         const ret_addr = frame[1];
         if (ret_addr == 0) break;
         vga.write("    [");
         printDec32(@truncate(depth));
         vga.write("] 0x");
-        printHex(ret_addr);
+        printHex64(ret_addr);
         vga.putChar('\n');
-        ebp = frame[0]; // 前のフレームの EBP
+        rbp = frame[0]; // 前のフレームの RBP
         depth += 1;
     }
 
@@ -108,24 +108,24 @@ pub fn panic(msg: []const u8) void {
     vga.setColor(.yellow, .black);
     vga.write("  Stack trace:\n");
     vga.setColor(.light_grey, .black);
-    var ebp: u32 = asm volatile ("mov %%ebp, %[ebp]"
-        : [ebp] "=r" (-> u32),
+    var rbp: u64 = asm volatile ("mov %%rbp, %[rbp]"
+        : [rbp] "=r" (-> u64),
     );
     var depth: usize = 0;
-    while (ebp != 0 and depth < 10) {
-        if (ebp < 0x100000 or ebp >= 0x8000000) break;
-        const frame: [*]const u32 = @ptrFromInt(ebp);
+    while (rbp != 0 and depth < 10) {
+        if (rbp < 0x100000 or rbp >= 0x8000000) break;
+        const frame: [*]const u64 = @ptrFromInt(@as(usize, @truncate(rbp)));
         const ret_addr = frame[1];
         if (ret_addr == 0) break;
         vga.write("    [");
         printDec32(@truncate(depth));
         vga.write("] 0x");
-        printHex(ret_addr);
+        printHex64(ret_addr);
         vga.putChar('\n');
         serial.write("  [");
-        serial.writeHex(ret_addr);
+        serial.writeHex(@truncate(ret_addr));
         serial.write("]\n");
-        ebp = frame[0];
+        rbp = frame[0];
         depth += 1;
     }
 
@@ -149,6 +149,19 @@ fn printHex(val: u32) void {
     while (i > 0) {
         i -= 1;
         buf[i] = hex[v & 0xF];
+        v >>= 4;
+    }
+    vga.write(&buf);
+}
+
+fn printHex64(val: u64) void {
+    const hex = "0123456789ABCDEF";
+    var buf: [16]u8 = undefined;
+    var v = val;
+    var i: usize = 16;
+    while (i > 0) {
+        i -= 1;
+        buf[i] = hex[@truncate(v & 0xF)];
         v >>= 4;
     }
     vga.write(&buf);

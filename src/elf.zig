@@ -159,9 +159,9 @@ fn buildArgv(t: *task.Task, name: []const u8, args: []const []const u8) void {
     const argc_p: *u32 = @ptrFromInt(t.user_stack + sp);
     argc_p.* = argc;
 
-    // IRET フレームの User ESP を更新
-    const kstack: [*]u32 = @ptrFromInt(t.kernel_esp);
-    kstack[11] = @truncate(t.user_stack + sp); // User ESP
+    // IRET フレームの User RSP を更新
+    const kstack: [*]u64 = @ptrFromInt(@as(usize, @truncate(t.kernel_rsp)));
+    kstack[18] = t.user_stack + sp; // User RSP
 
     serial.write("[ELF] argc=");
     serial.writeHex(argc);

@@ -223,13 +223,111 @@ const MultibootInfo = extern struct {
     mem_upper: u32,
 };
 
+// Page tables for the 32-bit boot stub to set up before entering Long Mode.
+// Identity-maps the first 1GB using 2MB pages.
+export var boot_pml4: [512]u64 align(4096) = @splat(0);
+export var boot_pdpt: [512]u64 align(4096) = @splat(0);
+export var boot_pd: [512]u64 align(4096) = @splat(0);
+
 export fn _start() callconv(.naked) noreturn {
+    // The entire body is inline assembly. We start in 32-bit protected mode
+    // (Multiboot1 entry) and transition to 64-bit Long Mode.
     asm volatile (
-        \\mov $stack_top, %%esp
-        \\push %%ebx
-        \\call kmain
-        \\1: hlt
-        \\jmp 1b
+        \\.code32
+        \\
+        \\ // Save multiboot info pointer (EBX) into EDI for later
+        \\ mov %%ebx, %%edi
+        \\
+        \\ // Set up a temporary 32-bit stack
+        \\ mov $stack_top, %%esp
+        \\
+        \\ // ----- Set up 4-level page tables for identity mapping first 1GB -----
+        \\ // Zero the page table arrays (they are in BSS so should be zero,
+        \\ // but be safe)
+        \\
+        \\ // pml4[0] = &pdpt | 0x03 (Present + Write)
+        \\ mov $boot_pdpt, %%eax
+        \\ or $0x03, %%eax
+        \\ mov $boot_pml4, %%ecx
+        \\ mov %%eax, (%%ecx)
+        \\ movl $0, 4(%%ecx)
+        \\
+        \\ // pdpt[0] = &pd | 0x03 (Present + Write)
+        \\ mov $boot_pd, %%eax
+        \\ or $0x03, %%eax
+        \\ mov $boot_pdpt, %%ecx
+        \\ mov %%eax, (%%ecx)
+        \\ movl $0, 4(%%ecx)
+        \\
+        \\ // pd[0..511] = i*2MB | 0x83 (Present + Write + PageSize)
+        \\ mov $boot_pd, %%ecx
+        \\ xor %%eax, %%eax       // physical address starts at 0
+        \\ mov $512, %%edx
+        \\1:
+        \\ mov %%eax, (%%ecx)
+        \\ orl $0x83, (%%ecx)     // Present + Write + PS (2MB page)
+        \\ movl $0, 4(%%ecx)
+        \\ add $8, %%ecx
+        \\ add $0x200000, %%eax   // next 2MB
+        \\ dec %%edx
+        \\ jnz 1b
+        \\
+        \\ // ----- Load PML4 into CR3 -----
+        \\ mov $boot_pml4, %%eax
+        \\ mov %%eax, %%cr3
+        \\
+        \\ // ----- Enable PAE (CR4 bit 5) -----
+        \\ mov %%cr4, %%eax
+        \\ or $0x20, %%eax
+        \\ mov %%eax, %%cr4
+        \\
+        \\ // ----- Enable Long Mode (EFER MSR 0xC0000080, bit 8) -----
+        \\ mov $0xC0000080, %%ecx
+        \\ rdmsr
+        \\ or $0x100, %%eax
+        \\ wrmsr
+        \\
+        \\ // ----- Enable Paging (CR0 bit 31) -----
+        \\ mov %%cr0, %%eax
+        \\ or $0x80000000, %%eax
+        \\ mov %%eax, %%cr0
+        \\
+        \\ // ----- Load 64-bit GDT and far jump to 64-bit code -----
+        \\ lgdt gdt64_ptr
+        \\ ljmp $0x08, $long_mode_entry
+        \\
+        \\.align 16
+        \\gdt64:
+        \\ .quad 0                      // null descriptor
+        \\ .quad 0x00AF9A000000FFFF     // 64-bit kernel code (L=1, D=0)
+        \\ .quad 0x00CF92000000FFFF     // 64-bit kernel data
+        \\ .quad 0x00AFFA000000FFFF     // 64-bit user code (DPL=3)
+        \\ .quad 0x00CFF2000000FFFF     // 64-bit user data (DPL=3)
+        \\gdt64_ptr:
+        \\ .word gdt64_ptr - gdt64 - 1
+        \\ .long gdt64
+        \\
+        \\.code64
+        \\long_mode_entry:
+        \\ // Load data segment registers with 64-bit data selector (0x10)
+        \\ mov $0x10, %%ax
+        \\ mov %%ax, %%ds
+        \\ mov %%ax, %%es
+        \\ mov %%ax, %%fs
+        \\ mov %%ax, %%gs
+        \\ mov %%ax, %%ss
+        \\
+        \\ // Set up 64-bit stack
+        \\ movabs $stack_top, %%rsp
+        \\
+        \\ // EDI already contains multiboot info pointer (zero-extended to RDI)
+        \\ // Call kmain(mb_info_addr: u64)
+        \\ call kmain
+        \\
+        \\ // Halt loop
+        \\2: cli
+        \\ hlt
+        \\ jmp 2b
     );
 }
 
@@ -244,14 +342,14 @@ fn logInit(comptime name: []const u8, initFn: anytype) void {
     serial.write(name ++ " OK\n");
 }
 
-export fn kmain(mb_info_addr: u32) void {
+export fn kmain(mb_info_addr: u64) void {
     vga.init();
     serial.init();
-    serial.write("\n=== Zig Kernel v1.0 boot ===\n");
+    serial.write("\n=== Zig Kernel v1.0 boot (x86_64) ===\n");
 
     vga.setColor(.light_green, .black);
     vga.write("=================================\n");
-    vga.write("  Zig Kernel v1.0\n");
+    vga.write("  Zig Kernel v1.0 (64-bit)\n");
     vga.write("=================================\n\n");
 
     logInit("[GDT] ", gdt.init);
@@ -262,7 +360,7 @@ export fn kmain(mb_info_addr: u32) void {
     vga.setColor(.light_grey, .black);
     vga.write("Initializing... ");
     if (mb_info_addr != 0) {
-        const mb_info: *const MultibootInfo = @ptrFromInt(mb_info_addr);
+        const mb_info: *const MultibootInfo = @ptrFromInt(@as(usize, @truncate(mb_info_addr)));
         if (mb_info.flags & 0x1 != 0) {
             pmm.init(mb_info.mem_upper);
         }
@@ -279,7 +377,7 @@ export fn kmain(mb_info_addr: u32) void {
     vga.write("[TSS]  ");
     vga.setColor(.light_grey, .black);
     vga.write("Initializing... ");
-    const kstack_top = asm volatile ("" : [esp] "={esp}" (-> u32));
+    const kstack_top = asm volatile ("" : [rsp] "={rsp}" (-> u64));
     tss.init(kstack_top);
     vga.setColor(.light_green, .black);
     vga.write("OK\n");

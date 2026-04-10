@@ -1,4 +1,4 @@
-// Interrupt Descriptor Table — 割り込みハンドラの登録と PIC 制御
+// Interrupt Descriptor Table — 64-bit IDT entries (16 bytes each)
 
 const vga = @import("vga.zig");
 const keyboard = @import("keyboard.zig");
@@ -7,42 +7,52 @@ const task = @import("task.zig");
 const isr = @import("isr.zig");
 
 const IdtEntry = packed struct {
-    base_low: u16,
-    sel: u16,
-    zero: u8 = 0,
-    flags: u8,
-    base_high: u16,
+    offset_low: u16, // bits 0-15 of handler
+    selector: u16, // code segment selector
+    ist: u8, // IST index (bits 0-2), rest zero
+    flags: u8, // type + DPL + Present
+    offset_mid: u16, // bits 16-31 of handler
+    offset_high: u32, // bits 32-63 of handler
+    reserved: u32, // must be zero
 };
 
 const IdtPtr = packed struct {
     limit: u16,
-    base: u32,
+    base: u64,
 };
 
 var idt_entries: [256]IdtEntry = @splat(IdtEntry{
-    .base_low = 0,
-    .sel = 0,
-    .zero = 0,
+    .offset_low = 0,
+    .selector = 0,
+    .ist = 0,
     .flags = 0,
-    .base_high = 0,
+    .offset_mid = 0,
+    .offset_high = 0,
+    .reserved = 0,
 });
 var idt_ptr: IdtPtr = undefined;
 
-fn setGate(n: u8, base: u32) void {
+fn setGate(n: u8, base: u64) void {
     idt_entries[n] = .{
-        .base_low = @truncate(base & 0xFFFF),
-        .base_high = @truncate((base >> 16) & 0xFFFF),
-        .sel = 0x08,
-        .flags = 0x8E, // present, DPL=0, 32-bit interrupt gate
+        .offset_low = @truncate(base & 0xFFFF),
+        .selector = 0x08,
+        .ist = 0,
+        .flags = 0x8E, // present, DPL=0, 64-bit interrupt gate
+        .offset_mid = @truncate((base >> 16) & 0xFFFF),
+        .offset_high = @truncate((base >> 32) & 0xFFFFFFFF),
+        .reserved = 0,
     };
 }
 
-fn setGateUser(n: u8, base: u32) void {
+fn setGateUser(n: u8, base: u64) void {
     idt_entries[n] = .{
-        .base_low = @truncate(base & 0xFFFF),
-        .base_high = @truncate((base >> 16) & 0xFFFF),
-        .sel = 0x08,
-        .flags = 0xEE, // present, DPL=3, 32-bit interrupt gate
+        .offset_low = @truncate(base & 0xFFFF),
+        .selector = 0x08,
+        .ist = 0,
+        .flags = 0xEE, // present, DPL=3, 64-bit interrupt gate
+        .offset_mid = @truncate((base >> 16) & 0xFFFF),
+        .offset_high = @truncate((base >> 32) & 0xFFFFFFFF),
+        .reserved = 0,
     };
 }
 
@@ -102,29 +112,84 @@ pub fn init() void {
 // IRQ0: タイマー割り込み (コンテキストスイッチ対応)
 fn irq0Stub() callconv(.naked) void {
     asm volatile (
-        \\pusha
-        \\mov %%esp, %%eax
-        \\push %%eax
-        \\call irq0Dispatch
-        \\mov %%eax, %%esp
-        \\popa
-        \\iret
+        \\push %%rax
+        \\push %%rbx
+        \\push %%rcx
+        \\push %%rdx
+        \\push %%rsi
+        \\push %%rdi
+        \\push %%rbp
+        \\push %%r8
+        \\push %%r9
+        \\push %%r10
+        \\push %%r11
+        \\push %%r12
+        \\push %%r13
+        \\push %%r14
+        \\push %%r15
+        \\mov %%rsp, %%rdi
+        \\call irq0Dispatch64
+        \\mov %%rax, %%rsp
+        \\pop %%r15
+        \\pop %%r14
+        \\pop %%r13
+        \\pop %%r12
+        \\pop %%r11
+        \\pop %%r10
+        \\pop %%r9
+        \\pop %%r8
+        \\pop %%rbp
+        \\pop %%rdi
+        \\pop %%rsi
+        \\pop %%rdx
+        \\pop %%rcx
+        \\pop %%rbx
+        \\pop %%rax
+        \\iretq
     );
 }
 
-export fn irq0Dispatch(esp: u32) u32 {
+export fn irq0Dispatch64(rsp: u64) u64 {
     pit.tick();
     outb(0x20, 0x20);
-    return task.timerSchedule(esp);
+    return task.timerSchedule(rsp);
 }
 
 // IRQ1: キーボード
 fn irq1Stub() callconv(.naked) void {
     asm volatile (
-        \\pusha
+        \\push %%rax
+        \\push %%rbx
+        \\push %%rcx
+        \\push %%rdx
+        \\push %%rsi
+        \\push %%rdi
+        \\push %%rbp
+        \\push %%r8
+        \\push %%r9
+        \\push %%r10
+        \\push %%r11
+        \\push %%r12
+        \\push %%r13
+        \\push %%r14
+        \\push %%r15
         \\call irq1Dispatch
-        \\popa
-        \\iret
+        \\pop %%r15
+        \\pop %%r14
+        \\pop %%r13
+        \\pop %%r12
+        \\pop %%r11
+        \\pop %%r10
+        \\pop %%r9
+        \\pop %%r8
+        \\pop %%rbp
+        \\pop %%rdi
+        \\pop %%rsi
+        \\pop %%rdx
+        \\pop %%rcx
+        \\pop %%rbx
+        \\pop %%rax
+        \\iretq
     );
 }
 
@@ -134,23 +199,28 @@ export fn irq1Dispatch() void {
 }
 
 // INT 0x80: システムコール
-// ecx/edx はカーネル側で破壊されうるため、復元してから iret する
+// In 64-bit: args in RAX(num), RBX(a1), RCX(a2), RDX(a3)
 fn syscallStub() callconv(.naked) void {
     asm volatile (
-        \\push %%edx
-        \\push %%ecx
-        \\push %%ebx
-        \\push %%eax
-        \\call syscallDispatch
-        \\add $4, %%esp
-        \\pop %%ebx
-        \\pop %%ecx
-        \\pop %%edx
-        \\iret
+        \\push %%rdx
+        \\push %%rcx
+        \\push %%rbx
+        \\push %%rax
+        \\mov %%rax, %%rdi
+        \\mov %%rbx, %%rsi
+        \\mov %%rcx, %%rdx
+        // RDX already has arg3 but we pushed it; reload from stack
+        \\mov 24(%%rsp), %%rcx
+        \\call syscallDispatch64
+        \\add $8, %%rsp
+        \\pop %%rbx
+        \\pop %%rcx
+        \\pop %%rdx
+        \\iretq
     );
 }
 
-// CPU例外スタブ (エラーコードなし: push $0, あり: CPUが自動プッシュ)
+// CPU例外スタブ (64-bit: no pusha, use individual pushes; halt after handler)
 fn isr0Stub() callconv(.naked) void {
     asm volatile ("push $0\n push $0\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b");
 }
@@ -181,11 +251,12 @@ fn isr11Stub() callconv(.naked) void { asm volatile ("push $11\n call isrCommonH
 fn isr12Stub() callconv(.naked) void { asm volatile ("push $12\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
 fn isr17Stub() callconv(.naked) void { asm volatile ("push $17\n call isrCommonHandler\n cli\n 1: hlt\n jmp 1b"); }
 
-export fn isrCommonHandler(vector: u32, error_code: u32) void {
-    isr.handler(vector, error_code);
+export fn isrCommonHandler(vector: u64, error_code: u64) void {
+    isr.handler(@truncate(vector), @truncate(error_code));
 }
 
 // ---- I/O ポート操作 ----
+// Port I/O instructions are the same in 64-bit mode
 
 pub fn outl(port: u16, val: u32) void {
     asm volatile ("outl %[val], %[port]"

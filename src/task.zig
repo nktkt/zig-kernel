@@ -1,4 +1,4 @@
-// タスク管理 — プロセス構造体、コンテキストスイッチ、スケジューラ、fork/wait/signal
+// タスク管理 — 64-bit プロセス構造体、コンテキストスイッチ、スケジューラ、fork/wait/signal
 
 const vga = @import("vga.zig");
 const pmm = @import("pmm.zig");
@@ -33,10 +33,10 @@ pub const Task = struct {
     pid: u32,
     ppid: u32, // 親プロセスID
     state: TaskState,
-    kernel_esp: u32,
-    kernel_stack: u32,
-    user_stack: u32,
-    page_dir: u32, // ページディレクトリ物理アドレス (0=カーネル共有)
+    kernel_rsp: u64,
+    kernel_stack: u64,
+    user_stack: u64,
+    page_dir: u64, // PML4 物理アドレス (0=カーネル共有)
     exit_code: i32,
     pending_signal: u8,
     name: [16]u8,
@@ -61,7 +61,7 @@ pub fn init() void {
     tasks[0].pid = 0;
     tasks[0].ppid = 0;
     tasks[0].state = .running;
-    tasks[0].page_dir = vmm.getCR3(); // カーネルの PD
+    tasks[0].page_dir = vmm.getCR3(); // カーネルの PML4
     tasks[0].name_len = 6;
     @memcpy(tasks[0].name[0..6], "kernel");
     current_task = 0;
@@ -74,7 +74,7 @@ pub fn enableScheduling() void {
 
 // ---- プロセス作成 ----
 
-pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
+pub fn createUserTask(entry_point: u64, name: []const u8) ?u32 {
     var slot: ?usize = null;
     for (&tasks, 0..) |*t, i| {
         if (t.state == .unused) {
@@ -89,25 +89,27 @@ pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
         pmm.free(kstack);
         return null;
     };
-    const kstack_top = kstack + KERNEL_STACK_SIZE;
-    const ustack_top = ustack + USER_STACK_SIZE;
+    const kstack_top: u64 = @intCast(kstack + KERNEL_STACK_SIZE);
+    const ustack_top: u64 = @intCast(ustack + USER_STACK_SIZE);
 
-    const stack_ptr: [*]u32 = @ptrFromInt(kstack_top - 13 * 4);
-    // pusha regs
-    stack_ptr[0] = 0; // EDI
-    stack_ptr[1] = 0; // ESI
-    stack_ptr[2] = 0; // EBP
-    stack_ptr[3] = 0; // ESP (ignored)
-    stack_ptr[4] = 0; // EBX
-    stack_ptr[5] = 0; // EDX
-    stack_ptr[6] = 0; // ECX
-    stack_ptr[7] = 0; // EAX
-    // IRET frame
-    stack_ptr[8] = entry_point;
-    stack_ptr[9] = USER_CS;
-    stack_ptr[10] = 0x202; // EFLAGS (IF=1)
-    stack_ptr[11] = ustack_top;
-    stack_ptr[12] = USER_DS;
+    // 64-bit IRET frame: [15 GP regs] [RIP] [CS] [RFLAGS] [RSP] [SS]
+    // 15 regs * 8 = 120, IRET frame = 5 * 8 = 40, total = 160 bytes = 20 u64s
+    const frame_size: u64 = 20 * 8;
+    const frame_base = kstack_top - frame_size;
+    const stack_ptr: [*]u64 = @ptrFromInt(frame_base);
+
+    // GP regs (R15..RAX): indices 0-14
+    // R15=0, R14=1, R13=2, R12=3, R11=4, R10=5, R9=6, R8=7
+    // RBP=8, RDI=9, RSI=10, RDX=11, RCX=12, RBX=13, RAX=14
+    for (0..15) |i| {
+        stack_ptr[i] = 0;
+    }
+    // IRET frame: RIP, CS, RFLAGS, RSP, SS
+    stack_ptr[15] = entry_point; // RIP
+    stack_ptr[16] = USER_CS; // CS
+    stack_ptr[17] = 0x202; // RFLAGS (IF=1)
+    stack_ptr[18] = ustack_top; // RSP
+    stack_ptr[19] = USER_DS; // SS
 
     const pid = next_pid;
     next_pid += 1;
@@ -116,10 +118,10 @@ pub fn createUserTask(entry_point: u32, name: []const u8) ?u32 {
         .pid = pid,
         .ppid = tasks[current_task].pid,
         .state = .ready,
-        .kernel_esp = kstack_top - 13 * 4,
-        .kernel_stack = kstack,
-        .user_stack = ustack,
-        .page_dir = vmm.getCR3(), // カーネル PD (identity mapped)
+        .kernel_rsp = frame_base,
+        .kernel_stack = @intCast(kstack),
+        .user_stack = @intCast(ustack),
+        .page_dir = vmm.getCR3(), // カーネル PML4 (identity mapped)
         .exit_code = 0,
         .pending_signal = SIG_NONE,
         .name = undefined,
@@ -156,7 +158,7 @@ pub fn fork() i32 {
 
     // 親のカーネルスタックをコピー
     const parent_kstack: [*]const u8 = @ptrFromInt(parent.kernel_stack);
-    const child_kstack: [*]u8 = @ptrFromInt(kstack);
+    const child_kstack: [*]u8 = @ptrFromInt(@as(usize, @intCast(kstack)));
     @memcpy(child_kstack[0..KERNEL_STACK_SIZE], parent_kstack[0..KERNEL_STACK_SIZE]);
 
     // 新しいユーザースタック
@@ -166,39 +168,41 @@ pub fn fork() i32 {
     };
     // 親のユーザースタックをコピー
     const parent_ustack: [*]const u8 = @ptrFromInt(parent.user_stack);
-    const child_ustack: [*]u8 = @ptrFromInt(ustack);
+    const child_ustack: [*]u8 = @ptrFromInt(@as(usize, @intCast(ustack)));
     @memcpy(child_ustack[0..USER_STACK_SIZE], parent_ustack[0..USER_STACK_SIZE]);
 
     const pid = next_pid;
     next_pid += 1;
 
-    // 子の kernel_esp は親と同じオフセット (スタック底からの距離)
-    const esp_offset = parent.kernel_esp - parent.kernel_stack;
-    const child_esp = kstack + esp_offset;
+    // 子の kernel_rsp は親と同じオフセット (スタック底からの距離)
+    const kstack64: u64 = @intCast(kstack);
+    const rsp_offset = parent.kernel_rsp - parent.kernel_stack;
+    const child_rsp = kstack64 + rsp_offset;
 
-    // 子の IRET フレーム内の User ESP を新しい ustack に調整
-    // kernel_esp → pusha[8] → IRET[EIP,CS,EFLAGS,ESP,SS]
-    // User ESP は offset +11*4 from kernel_esp
-    const child_stack: [*]u32 = @ptrFromInt(child_esp);
-    const parent_ustack_top = parent.user_stack + USER_STACK_SIZE;
-    const child_ustack_top = ustack + USER_STACK_SIZE;
-    // User ESP の差分を調整
-    if (child_stack[11] >= parent.user_stack and child_stack[11] <= parent_ustack_top) {
-        const usp_offset = parent_ustack_top - child_stack[11];
-        child_stack[11] = child_ustack_top - usp_offset;
+    // 子の IRET フレーム内の User RSP を新しい ustack に調整
+    // kernel_rsp → [15 GP regs] [RIP] [CS] [RFLAGS] [RSP] [SS]
+    // User RSP は offset +18*8 from kernel_rsp (index 18)
+    const child_stack: [*]u64 = @ptrFromInt(@as(usize, @intCast(child_rsp)));
+    const parent_ustack_top: u64 = parent.user_stack + USER_STACK_SIZE;
+    const child_ustack_top: u64 = @intCast(ustack + USER_STACK_SIZE);
+    // User RSP の差分を調整
+    if (child_stack[18] >= parent.user_stack and child_stack[18] <= parent_ustack_top) {
+        const usp_offset = parent_ustack_top - child_stack[18];
+        child_stack[18] = child_ustack_top - usp_offset;
     }
 
-    // 子の EAX (fork 戻り値) を 0 に設定
-    child_stack[7] = 0; // EAX = 0 (child returns 0)
+    // 子の RAX (fork 戻り値) を 0 に設定
+    // RAX is at index 14 (after R15..RBP,RDI,RSI,RDX,RCX,RBX)
+    child_stack[14] = 0; // RAX = 0 (child returns 0)
 
     tasks[idx] = .{
         .pid = pid,
         .ppid = parent.pid,
         .state = .ready,
-        .kernel_esp = child_esp,
-        .kernel_stack = kstack,
-        .user_stack = ustack,
-        .page_dir = vmm.getCR3(), // カーネル PD 共有 (identity mapped)
+        .kernel_rsp = child_rsp,
+        .kernel_stack = kstack64,
+        .user_stack = @intCast(ustack),
+        .page_dir = vmm.getCR3(), // カーネル PML4 共有 (identity mapped)
         .exit_code = 0,
         .pending_signal = SIG_NONE,
         .name = parent.name,
@@ -309,10 +313,10 @@ pub fn sendSignal(pid: u32, sig: u8) bool {
 
 // ---- スケジューラ ----
 
-pub export fn timerSchedule(esp: u32) u32 {
-    if (!scheduling_enabled) return esp;
+pub export fn timerSchedule(rsp: u64) u64 {
+    if (!scheduling_enabled) return rsp;
 
-    tasks[current_task].kernel_esp = esp;
+    tasks[current_task].kernel_rsp = rsp;
 
     // zombie 回収 (カーネル PID=0 が init として機能)
     for (&tasks) |*t| {
@@ -338,7 +342,7 @@ pub export fn timerSchedule(esp: u32) u32 {
         if (tasks[next].state == .ready) break;
     }
 
-    if (next == prev) return esp;
+    if (next == prev) return rsp;
 
     if (tasks[prev].state == .running) {
         tasks[prev].state = .ready;
@@ -348,14 +352,14 @@ pub export fn timerSchedule(esp: u32) u32 {
 
     tss.setKernelStack(tasks[next].kernel_stack + KERNEL_STACK_SIZE);
 
-    // CR3 切替: プロセスごとのページディレクトリ
+    // CR3 切替: プロセスごとのPML4
     const next_pd = tasks[next].page_dir;
     const prev_pd = tasks[prev].page_dir;
     if (next_pd != 0 and next_pd != prev_pd) {
         vmm.switchTo(next_pd);
     }
 
-    return tasks[next].kernel_esp;
+    return tasks[next].kernel_rsp;
 }
 
 pub fn exitCurrentTask() void {
@@ -453,7 +457,7 @@ pub fn userProgramHello() callconv(.c) noreturn {
 }
 
 pub fn userProgramCounter() callconv(.c) noreturn {
-    var i: u32 = 0;
+    var i: u64 = 0;
     while (i < 3) : (i += 1) {
         const msg = "Counter task running...\n";
         _ = syscall.userSyscall(syscall.SYS_WRITE, 1, @intFromPtr(msg.ptr), msg.len);

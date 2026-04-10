@@ -1,4 +1,4 @@
-// システムコール — INT 0x80 でユーザー空間からカーネル機能を呼び出す
+// システムコール — INT 0x80 でユーザー空間からカーネル機能を呼び出す (64-bit)
 
 const vga = @import("vga.zig");
 const task = @import("task.zig");
@@ -15,87 +15,93 @@ pub const SYS_WAIT = 6;
 pub const SYS_KILL = 7;
 pub const SYS_GETPPID = 8;
 
-export fn syscallDispatch(eax: u32, ebx: u32, ecx: u32, edx: u32) u32 {
-    return switch (eax) {
-        SYS_EXIT => sysExit(ebx),
-        SYS_WRITE => sysWrite(ebx, ecx, edx),
+// Called from syscallStub in idt.zig via System V AMD64 calling convention:
+// RDI=syscall_num, RSI=arg1, RDX=arg2, RCX=arg3
+export fn syscallDispatch64(rdi: u64, rsi: u64, rdx: u64, rcx: u64) u64 {
+    const num: u32 = @truncate(rdi);
+    const arg1: u64 = rsi;
+    const arg2: u64 = rdx;
+    const arg3: u64 = rcx;
+    return switch (num) {
+        SYS_EXIT => sysExit(arg1),
+        SYS_WRITE => sysWrite(arg1, arg2, arg3),
         SYS_GETPID => sysGetpid(),
         SYS_YIELD => sysYield(),
-        SYS_SLEEP => sysSleep(ebx),
+        SYS_SLEEP => sysSleep(arg1),
         SYS_FORK => sysFork(),
         SYS_WAIT => sysWait(),
-        SYS_KILL => sysKill(ebx, ecx),
+        SYS_KILL => sysKill(arg1, arg2),
         SYS_GETPPID => sysGetppid(),
-        else => 0xFFFFFFFF,
+        else => 0xFFFFFFFFFFFFFFFF,
     };
 }
 
-fn sysExit(status: u32) u32 {
-    task.exitWithCode(@intCast(status & 0xFF));
+fn sysExit(status: u64) u64 {
+    task.exitWithCode(@intCast(@as(u32, @truncate(status)) & 0xFF));
     return 0;
 }
 
-fn sysWrite(_: u32, buf_ptr: u32, len: u32) u32 {
+fn sysWrite(_: u64, buf_ptr: u64, len: u64) u64 {
     if (len > 4096) return 0;
     if (buf_ptr == 0) return 0;
     const end = @addWithOverflow(buf_ptr, len);
     if (end[1] != 0) return 0;
-    const buf: [*]const u8 = @ptrFromInt(buf_ptr);
-    vga.write(buf[0..len]);
+    const buf: [*]const u8 = @ptrFromInt(@as(usize, @truncate(buf_ptr)));
+    vga.write(buf[0..@as(usize, @truncate(len))]);
     return len;
 }
 
-fn sysGetpid() u32 {
+fn sysGetpid() u64 {
     return task.getCurrentPid();
 }
 
-fn sysYield() u32 {
+fn sysYield() u64 {
     task.yield();
     return 0;
 }
 
-fn sysSleep(ms: u32) u32 {
+fn sysSleep(ms: u64) u64 {
     _ = ms;
     task.yield();
     return 0;
 }
 
-fn sysFork() u32 {
+fn sysFork() u64 {
     const result = task.fork();
-    if (result < 0) return 0xFFFFFFFF;
+    if (result < 0) return 0xFFFFFFFFFFFFFFFF;
     return @intCast(result);
 }
 
-fn sysWait() u32 {
+fn sysWait() u64 {
     const result = task.wait();
     if (result == -2) {
         // 子がまだ生きている — yield して再試行
         task.yield();
-        return @bitCast(task.wait());
+        return @bitCast(@as(i64, task.wait()));
     }
-    return @bitCast(result);
+    return @bitCast(@as(i64, result));
 }
 
-fn sysKill(pid: u32, sig: u32) u32 {
-    if (task.sendSignal(pid, @truncate(sig))) return 0;
-    return 0xFFFFFFFF;
+fn sysKill(pid: u64, sig: u64) u64 {
+    if (task.sendSignal(@truncate(pid), @truncate(sig))) return 0;
+    return 0xFFFFFFFFFFFFFFFF;
 }
 
-fn sysGetppid() u32 {
+fn sysGetppid() u64 {
     if (task.getTask(task.getCurrentPid())) |t| {
         return t.ppid;
     }
     return 0;
 }
 
-// ユーザー空間用のシステムコールラッパー
-pub fn userSyscall(num: u32, arg1: u32, arg2: u32, arg3: u32) u32 {
+// ユーザー空間用のシステムコールラッパー (64-bit)
+pub fn userSyscall(num: u64, arg1: u64, arg2: u64, arg3: u64) u64 {
     return asm volatile ("int $0x80"
-        : [ret] "={eax}" (-> u32),
-        : [num] "{eax}" (num),
-          [a1] "{ebx}" (arg1),
-          [a2] "{ecx}" (arg2),
-          [a3] "{edx}" (arg3),
+        : [ret] "={rax}" (-> u64),
+        : [num] "{rax}" (num),
+          [a1] "{rbx}" (arg1),
+          [a2] "{rcx}" (arg2),
+          [a3] "{rdx}" (arg3),
         : .{ .memory = true }
     );
 }

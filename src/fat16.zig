@@ -155,7 +155,7 @@ fn readClusterChain(start_cluster: u16, file_size: u32, buf: *[2048]u8) ?usize {
 fn readFatEntry(cluster: u16) ?u16 {
     const fat_offset = @as(u32, cluster) * 2;
     const fat_sector = reserved_sectors + fat_offset / 512;
-    const offset: usize = @truncate(fat_offset % 512);
+    const offset: usize = @intCast(fat_offset % 512);
 
     if (!ata.readSectors(fat_sector, 1, &sector_buf)) return null;
     return readU16At(&sector_buf, offset);
@@ -298,7 +298,7 @@ fn freeClusterChain(start: u16) void {
 fn writeFatEntry(cluster: u16, value: u16) void {
     const fat_offset = @as(u32, cluster) * 2;
     const fat_sect = reserved_sectors + fat_offset / 512;
-    const offset: usize = @truncate(fat_offset % 512);
+    const offset: usize = @intCast(fat_offset % 512);
 
     if (!ata.readSectors(fat_sect, 1, &sector_buf)) return;
     writeU16At(&sector_buf, offset, value);

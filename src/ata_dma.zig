@@ -573,7 +573,7 @@ pub fn printInfo() void {
 
     // PRDT address
     vga.write("  PRDT:       0x");
-    printHex32(@intFromPtr(&prdt));
+    printHex32(@truncate(@intFromPtr(&prdt)));
     vga.putChar('\n');
 
     // Statistics

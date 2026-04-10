@@ -115,7 +115,7 @@ pub fn init() bool {
             .special = 0,
         };
     }
-    writeReg(REG_RDBAL, @intFromPtr(&rx_descs));
+    writeReg(REG_RDBAL, @truncate(@intFromPtr(&rx_descs)));
     writeReg(REG_RDLEN, NUM_RX * @sizeOf(RxDesc));
     writeReg(REG_RDH, 0);
     writeReg(REG_RDT, NUM_RX - 1);
@@ -138,7 +138,7 @@ pub fn init() bool {
             .special = 0,
         };
     }
-    writeReg(REG_TDBAL, @intFromPtr(&tx_descs));
+    writeReg(REG_TDBAL, @truncate(@intFromPtr(&tx_descs)));
     writeReg(REG_TDLEN, NUM_TX * @sizeOf(TxDesc));
     writeReg(REG_TDH, 0);
     writeReg(REG_TDT, 0);
