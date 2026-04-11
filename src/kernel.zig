@@ -23,6 +23,7 @@ const user = @import("user.zig");
 const init_mod = @import("init.zig");
 const env = @import("env.zig");
 const shell = @import("shell.zig");
+const autotest = @import("autotest.zig");
 const acpi = @import("acpi.zig");
 const smp = @import("smp.zig");
 const mouse = @import("mouse.zig");
@@ -609,14 +610,18 @@ export fn kmain(mb_info_addr: u64) void {
     vga.write("[RTC]  ");
     rtc.printDateTime();
 
+    // ブート時自動テスト (最小)
+    vga.setColor(.yellow, .black);
+    vga.write("[TEST] Starting...\n");
+    serial.write("[TEST] Starting...\n");
+    autotest.run();
+    serial.write("[TEST] Done.\n");
+
     vga.write("\n");
     vga.setColor(.yellow, .black);
     vga.write("Type 'help' for commands.\n\n");
     vga.setColor(.white, .black);
 
-    // カーネル (PID=0) が init として機能
-    // zombie 回収は timerSchedule 内で実行
-    // シェルはカーネル内で直接実行 (キーボード IRQ 経由)
     shell.init();
 }
 
