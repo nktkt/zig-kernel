@@ -66,7 +66,7 @@ fn picRemap() void {
     outb(0xA1, 0x02);
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
-    outb(0x21, 0xFC);
+    outb(0x21, 0xEC); // IRQ0(timer) + IRQ1(kbd) + IRQ4(COM1) enabled
     outb(0xA1, 0xFF);
 }
 
@@ -94,8 +94,9 @@ pub fn init() void {
     setGate(19, @intFromPtr(&isr19Stub));
 
     // IRQ + syscall
-    setGate(32, @intFromPtr(&irq0Stub));
-    setGate(33, @intFromPtr(&irq1Stub));
+    setGate(32, @intFromPtr(&irq0Stub));   // IRQ0: timer
+    setGate(33, @intFromPtr(&irq1Stub));   // IRQ1: keyboard
+    setGate(36, @intFromPtr(&irq4Stub));   // IRQ4: COM1 serial
     setGateUser(0x80, @intFromPtr(&syscallStub)); // INT 0x80 (DPL=3)
 
     idt_ptr = .{
@@ -152,6 +153,8 @@ fn irq0Stub() callconv(.naked) void {
 
 export fn irq0Dispatch64(rsp: u64) u64 {
     pit.tick();
+    // シリアルコンソール入力ポーリング (IRQ4 が動かない環境用)
+    serial.pollInput();
     outb(0x20, 0x20);
     return task.timerSchedule(rsp);
 }
@@ -196,6 +199,49 @@ fn irq1Stub() callconv(.naked) void {
 
 export fn irq1Dispatch() void {
     keyboard.handleIrq();
+    outb(0x20, 0x20);
+}
+
+// IRQ4: COM1 シリアル受信
+fn irq4Stub() callconv(.naked) void {
+    asm volatile (
+        \\push %%rax
+        \\push %%rbx
+        \\push %%rcx
+        \\push %%rdx
+        \\push %%rsi
+        \\push %%rdi
+        \\push %%rbp
+        \\push %%r8
+        \\push %%r9
+        \\push %%r10
+        \\push %%r11
+        \\push %%r12
+        \\push %%r13
+        \\push %%r14
+        \\push %%r15
+        \\call irq4Dispatch
+        \\pop %%r15
+        \\pop %%r14
+        \\pop %%r13
+        \\pop %%r12
+        \\pop %%r11
+        \\pop %%r10
+        \\pop %%r9
+        \\pop %%r8
+        \\pop %%rbp
+        \\pop %%rdi
+        \\pop %%rsi
+        \\pop %%rdx
+        \\pop %%rcx
+        \\pop %%rbx
+        \\pop %%rax
+        \\iretq
+    );
+}
+
+export fn irq4Dispatch() void {
+    serial.handleIrq();
     outb(0x20, 0x20);
 }
 
